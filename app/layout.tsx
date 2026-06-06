@@ -12,8 +12,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "採用管理ワークスペース",
-  description: "tweakcn テーマ + 日本語タイポ検証用プロトタイプ",
+  title: "ライブ切り抜きエディタ",
+  description: "ライブ配信の切り抜き・文字起こし・Premiere 用 SRT 出力",
 };
 
 export const viewport: Viewport = {

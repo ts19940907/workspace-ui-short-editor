@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // 壊れた依存の退避フォルダ（node_modules 以外の名前のため ESLint 対象外にする）
+    "node_modules.broken.*/**",
   ]),
 ]);
 

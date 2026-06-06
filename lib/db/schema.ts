@@ -1,16 +1,24 @@
 import { sql } from "drizzle-orm";
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import {
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+} from "drizzle-orm/pg-core";
 
 /** 単一オーナー用（OAuth なし） */
-export const users = sqliteTable("user", {
+export const users = pgTable("user", {
   id: text("id").primaryKey(),
   name: text("name"),
   email: text("email").notNull().unique(),
+  emailVerified: timestamp("emailVerified", { mode: "date" }),
+  image: text("image"),
 });
 
 // ----- 切り抜き: プロジェクト -----
 
-export const clipProjects = sqliteTable("clip_project", {
+export const clipProjects = pgTable("clip_project", {
   id: text("id")
     .primaryKey()
     .$defaultFn(() => crypto.randomUUID()),
@@ -26,17 +34,17 @@ export const clipProjects = sqliteTable("clip_project", {
   videoFileName: text("video_file_name"),
   videoBlobUrl: text("video_blob_url"),
   playheadMs: integer("playhead_ms").notNull().default(0),
-  createdAt: integer("created_at", { mode: "timestamp" })
+  createdAt: timestamp("created_at", { mode: "date" })
     .notNull()
-    .default(sql`(unixepoch())`),
-  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "date" })
     .notNull()
-    .default(sql`(unixepoch())`),
+    .defaultNow(),
 });
 
 // ----- 切り抜き: タイトル -----
 
-export const titleSegments = sqliteTable("title_segment", {
+export const titleSegments = pgTable("title_segment", {
   id: text("id")
     .primaryKey()
     .$defaultFn(() => crypto.randomUUID()),
@@ -48,15 +56,15 @@ export const titleSegments = sqliteTable("title_segment", {
   readOnlyText: text("read_only_text"),
   editableText: text("editable_text"),
   topicLabel: text("topic_label"),
-  sourceSegmentIds: text("source_segment_ids", { mode: "json" })
+  sourceSegmentIds: jsonb("source_segment_ids")
     .$type<string[]>()
     .notNull()
-    .default([]),
+    .default(sql`'[]'::jsonb`),
 });
 
 // ----- 切り抜き: 文字起こし -----
 
-export const transcriptSegments = sqliteTable("transcript_segment", {
+export const transcriptSegments = pgTable("transcript_segment", {
   id: text("id")
     .primaryKey()
     .$defaultFn(() => crypto.randomUUID()),

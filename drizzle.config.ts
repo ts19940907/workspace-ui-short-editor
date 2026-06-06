@@ -3,21 +3,19 @@ import { defineConfig } from "drizzle-kit";
 
 loadEnvConfig(process.cwd());
 
-const url = process.env.TURSO_DATABASE_URL;
-const authToken = process.env.TURSO_AUTH_TOKEN;
+const url = process.env.DATABASE_URL;
 
-if (!url || !authToken) {
+if (!url) {
   throw new Error(
-    "TURSO_DATABASE_URL と TURSO_AUTH_TOKEN を .env.local に設定してください（.env.example を参照）。",
+    "DATABASE_URL を .env.local に設定してください（.env.example を参照）。",
   );
 }
 
 export default defineConfig({
   schema: "./lib/db/schema.ts",
   out: "./drizzle",
-  dialect: "turso",
+  dialect: "postgresql",
   dbCredentials: {
     url,
-    authToken,
   },
 });

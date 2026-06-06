@@ -100,8 +100,8 @@ export function ClipOutputPane({
             </Button>
             <p className="text-xs text-muted-foreground">
               {cloudEnabled
-                ? "保存すると Turso に書き込まれ、左の一覧に表示されます。"
-                : "Turso 未設定のため、この端末のメモリ上のみに保存されます（.env.local に TURSO_* を設定してください）。"}
+                ? "保存すると Neon に書き込まれ、左の一覧に表示されます。"
+                : "DATABASE_URL 未設定のため、この端末のメモリ上のみに保存されます（.env.local に DATABASE_URL を設定してください）。"}
             </p>
           </Card>
 

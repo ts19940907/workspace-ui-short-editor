@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { FileDown, Save, Sparkles, SpellCheck } from "lucide-react";
+import { FileDown, Save, Sparkles, SpellCheck, Trash2 } from "lucide-react";
 
 import { downloadPremiereExport } from "@/lib/clip/srt";
 import type { ClipProject } from "@/lib/clip-schema";
@@ -18,28 +18,35 @@ type ClipOutputPaneProps = {
   project: ClipProject;
   paneOpen: boolean;
   cloudEnabled?: boolean;
+  blobUploadEnabled?: boolean;
   isOutputRunning: boolean;
   isSaving: boolean;
+  isDeleting?: boolean;
   onTogglePane: () => void;
   onSourceUrlChange: (url: string) => void;
   onRunOutput: () => void;
   onSave: () => void;
+  onDelete?: () => void;
 };
 
 export function ClipOutputPane({
   project,
   paneOpen,
   cloudEnabled = false,
+  blobUploadEnabled = false,
   isOutputRunning,
   isSaving,
+  isDeleting = false,
   onTogglePane,
   onSourceUrlChange,
   onRunOutput,
   onSave,
+  onDelete,
 }: ClipOutputPaneProps) {
   const [proofreadOpen, setProofreadOpen] = useState(false);
   const canExport =
     project.segments.length > 0 && project.editableTitles.length > 0;
+  const isSaved = project.isSaved ?? false;
 
   if (!paneOpen) {
     return (
@@ -92,17 +99,42 @@ export function ClipOutputPane({
             <Button
               type="button"
               size="sm"
-              disabled={isSaving}
+              disabled={isSaving || isDeleting}
               onClick={onSave}
             >
               <Save data-icon="inline-start" />
-              {isSaving ? "保存中…" : "保存"}
+              {isSaving ? "保存中…" : isSaved ? "更新" : "保存"}
             </Button>
+            {isSaved && onDelete ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={isSaving || isDeleting}
+                onClick={onDelete}
+              >
+                <Trash2 data-icon="inline-start" />
+                {isDeleting ? "削除中…" : "削除"}
+              </Button>
+            ) : null}
             <p className="text-xs text-muted-foreground">
               {cloudEnabled
-                ? "保存すると Neon に書き込まれ、左の一覧に表示されます。"
+                ? isSaved
+                  ? "「更新」で Neon の clip_project / title_segment / transcript_segment に上書き保存されます。"
+                  : "「保存」で Neon に書き込まれ、左の一覧に表示されます。"
                 : "DATABASE_URL 未設定のため、この端末のメモリ上のみに保存されます（.env.local に DATABASE_URL を設定してください）。"}
             </p>
+            {blobUploadEnabled ? (
+              <p className="text-xs text-muted-foreground">
+                動画ファイルは Vercel Blob に保存し、URL を clip_project.video_blob_url
+                に記録します。
+              </p>
+            ) : cloudEnabled ? (
+              <p className="text-xs text-muted-foreground">
+                BLOB_READ_WRITE_TOKEN 未設定のため、動画はブラウザ内のみ再生されます（ファイル名のみ
+                DB に保存可能）。
+              </p>
+            ) : null}
           </Card>
 
           <Separator />

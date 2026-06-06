@@ -1,10 +1,17 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { Film, Plus } from "lucide-react";
+import { Film, MoreHorizontal, Plus, Trash2 } from "lucide-react";
 
 import { type ClipProject } from "@/lib/clip-schema";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Sidebar,
   SidebarContent,
@@ -13,6 +20,7 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
@@ -27,6 +35,7 @@ type ProjectLibraryPaneProps = {
   onCreateProject: () => void;
   onSelectProject: (id: string) => void;
   onAttachVideo: (projectId: string, file: File) => void;
+  onDeleteProject: (project: ClipProject) => void;
 };
 
 export function ProjectLibraryPane({
@@ -37,6 +46,7 @@ export function ProjectLibraryPane({
   onCreateProject,
   onSelectProject,
   onAttachVideo,
+  onDeleteProject,
 }: ProjectLibraryPaneProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const attachTargetIdRef = useRef<string | null>(null);
@@ -159,6 +169,27 @@ export function ProjectLibraryPane({
                           {project.videoFileName ?? "動画未設定"}
                         </span>
                       </SidebarMenuButton>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          render={
+                            <SidebarMenuAction showOnHover>
+                              <MoreHorizontal />
+                              <span className="sr-only">操作</span>
+                            </SidebarMenuAction>
+                          }
+                        />
+                        <DropdownMenuContent side="right" align="start">
+                          <DropdownMenuGroup>
+                            <DropdownMenuItem
+                              variant="destructive"
+                              onSelect={() => onDeleteProject(project)}
+                            >
+                              <Trash2 />
+                              削除
+                            </DropdownMenuItem>
+                          </DropdownMenuGroup>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </SidebarMenuItem>
                   ))}
                 </SidebarMenu>

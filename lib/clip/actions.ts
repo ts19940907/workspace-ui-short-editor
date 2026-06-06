@@ -1,12 +1,14 @@
 "use server";
 
+import { del } from "@vercel/blob";
 import { revalidatePath } from "next/cache";
 
 import type { ClipProject } from "@/lib/clip-schema";
 import { clipProjectSchema } from "@/lib/clip-schema";
-import { isCloudEnabled } from "@/lib/cloud/config";
+import { isBlobStorageEnabled, isCloudEnabled } from "@/lib/cloud/config";
 import {
   createProjectForUser,
+  deleteProjectForUser,
   listProjectsByUserId,
   updateProjectForUser,
 } from "@/lib/clip/db/projects";
@@ -14,7 +16,7 @@ import { ensureOwnerUser } from "@/lib/db/ensure-owner";
 
 async function requireOwnerUserId(): Promise<string> {
   if (!isCloudEnabled()) {
-    throw new Error("Turso が有効化されていません");
+    throw new Error("DATABASE_URL が設定されていません");
   }
   return ensureOwnerUser();
 }
@@ -48,4 +50,29 @@ export async function saveProjectAction(
   }
   revalidatePath("/");
   return saved;
+}
+
+/** 既存プロジェクトの内容を Neon に上書き保存する。 */
+export async function updateProjectAction(
+  projectInput: ClipProject,
+): Promise<ClipProject> {
+  return saveProjectAction(projectInput);
+}
+
+export async function deleteProjectAction(projectId: string): Promise<void> {
+  const userId = await requireOwnerUserId();
+  const deleted = await deleteProjectForUser(userId, projectId);
+  if (!deleted) {
+    throw new Error("プロジェクトの削除に失敗しました");
+  }
+
+  if (isBlobStorageEnabled() && deleted.videoBlobUrl) {
+    try {
+      await del(deleted.videoBlobUrl);
+    } catch {
+      // Blob 削除失敗は DB 削除成功を優先する
+    }
+  }
+
+  revalidatePath("/");
 }

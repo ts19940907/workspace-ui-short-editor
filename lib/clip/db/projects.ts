@@ -1,4 +1,4 @@
-import { asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 
 import type {
   ClipProject,
@@ -206,6 +206,28 @@ export async function createProjectForUser(
     })
     .returning();
   return assembleClipProject(row, [], []);
+}
+
+export async function deleteProjectForUser(
+  userId: string,
+  projectId: string,
+): Promise<{ videoBlobUrl: string | null } | null> {
+  const db = getDb();
+  const [row] = await db
+    .select({
+      id: clipProjects.id,
+      videoBlobUrl: clipProjects.videoBlobUrl,
+    })
+    .from(clipProjects)
+    .where(
+      and(eq(clipProjects.id, projectId), eq(clipProjects.userId, userId)),
+    )
+    .limit(1);
+
+  if (!row) return null;
+
+  await db.delete(clipProjects).where(eq(clipProjects.id, projectId));
+  return { videoBlobUrl: row.videoBlobUrl };
 }
 
 export async function updateProjectForUser(

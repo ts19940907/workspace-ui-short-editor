@@ -6,6 +6,7 @@ import { upload } from "@vercel/blob/client";
 import { type ClipProject, type TimelineSelection } from "@/lib/clip-schema";
 import {
   createProjectAction,
+  deleteProjectAction,
   saveProjectAction,
 } from "@/lib/clip/actions";
 import { mockRunAiOutput } from "@/lib/clip/mock-pipeline";
@@ -24,6 +25,7 @@ import { ProjectLibraryPane } from "@/components/workspace/ProjectLibraryPane";
 import { TitleEditorPane } from "@/components/workspace/TitleEditorPane";
 import { VideoTimelinePane } from "@/components/workspace/VideoTimelinePane";
 import { ClipOutputPane } from "@/components/workspace/ClipOutputPane";
+import { DeleteConfirmDialog } from "@/components/workspace/DeleteConfirmDialog";
 
 type ClipWorkspaceProps = {
   workspaceName: string;
@@ -54,11 +56,35 @@ export function ClipWorkspace({
   const [uploadStatus, setUploadStatus] = useState<
     "idle" | "uploading" | "error"
   >("idle");
+  const [deleteTarget, setDeleteTarget] = useState<ClipProject | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const activeProject = useMemo(() => {
     if (draftProject?.id === selectedProjectId) return draftProject;
     return savedProjects.find((p) => p.id === selectedProjectId) ?? null;
   }, [draftProject, savedProjects, selectedProjectId]);
+
+  const isProjectSavedInCloud = useCallback(
+    (projectId: string) =>
+      savedProjects.some((p) => p.id === projectId && p.isSaved),
+    [savedProjects],
+  );
+
+  const persistProjectToCloud = useCallback(
+    async (project: ClipProject): Promise<ClipProject | null> => {
+      if (!cloudEnabled) return project;
+      try {
+        if (isProjectSavedInCloud(project.id)) {
+          return await saveProjectAction(project);
+        }
+        return null;
+      } catch {
+        setSaveStatus("error");
+        return null;
+      }
+    },
+    [cloudEnabled, isProjectSavedInCloud],
+  );
 
   const videoUrl = activeProject
     ? (videoBlobUrls[activeProject.id] ?? activeProject.videoBlobUrl)
@@ -117,6 +143,12 @@ export function ClipWorkspace({
 
   const attachVideo = useCallback(
     async (projectId: string, file: File) => {
+      const previous =
+        draftProject?.id === projectId
+          ? draftProject
+          : savedProjects.find((p) => p.id === projectId);
+      if (!previous) return;
+
       const blobUrl = URL.createObjectURL(file);
       setVideoBlobUrls((prev) => {
         const old = prev[projectId];
@@ -124,8 +156,10 @@ export function ClipWorkspace({
         return { ...prev, [projectId]: blobUrl };
       });
       setIsPlaying(false);
+      setTimelineSelection(null);
 
-      const resetTimeline = {
+      const resetProject: ClipProject = {
+        ...previous,
         videoFileName: file.name,
         playheadMs: 0,
         segments: [],
@@ -136,15 +170,12 @@ export function ClipWorkspace({
       };
 
       if (draftProject?.id === projectId) {
-        setDraftProject({ ...draftProject, ...resetTimeline });
+        setDraftProject(resetProject);
       } else {
         setSavedProjects((prev) =>
-          prev.map((p) =>
-            p.id === projectId ? { ...p, ...resetTimeline } : p,
-          ),
+          prev.map((p) => (p.id === projectId ? resetProject : p)),
         );
       }
-      setTimelineSelection(null);
 
       if (!cloudEnabled || !blobUploadEnabled) return;
 
@@ -156,23 +187,39 @@ export function ClipWorkspace({
           handleUploadUrl: "/api/blob/upload",
         });
         setVideoBlobUrls((prev) => ({ ...prev, [projectId]: result.url }));
-        const patch = {
+
+        const updatedProject: ClipProject = {
+          ...resetProject,
           videoBlobUrl: result.url,
           videoFileName: file.name,
         };
+
         if (draftProject?.id === projectId) {
-          setDraftProject({ ...draftProject, ...patch });
+          setDraftProject(updatedProject);
         } else {
           setSavedProjects((prev) =>
-            prev.map((p) => (p.id === projectId ? { ...p, ...patch } : p)),
+            prev.map((p) => (p.id === projectId ? updatedProject : p)),
           );
         }
+
+        const persisted = await persistProjectToCloud(updatedProject);
+        if (persisted) {
+          replaceActiveProject(persisted);
+        }
+
         setUploadStatus("idle");
       } catch {
         setUploadStatus("error");
       }
     },
-    [blobUploadEnabled, cloudEnabled, draftProject],
+    [
+      blobUploadEnabled,
+      cloudEnabled,
+      draftProject,
+      persistProjectToCloud,
+      replaceActiveProject,
+      savedProjects,
+    ],
   );
 
   const handleSave = useCallback(async () => {
@@ -262,6 +309,42 @@ export function ClipWorkspace({
     [patchActiveProject],
   );
 
+  const handleRequestDelete = useCallback((project: ClipProject) => {
+    setDeleteTarget(project);
+  }, []);
+
+  const handleConfirmDelete = useCallback(async () => {
+    if (!deleteTarget) return;
+    setIsDeleting(true);
+    try {
+      if (cloudEnabled && deleteTarget.isSaved) {
+        await deleteProjectAction(deleteTarget.id);
+      }
+      setSavedProjects((prev) =>
+        prev.filter((p) => p.id !== deleteTarget.id),
+      );
+      setVideoBlobUrls((prev) => {
+        const next = { ...prev };
+        const localUrl = next[deleteTarget.id];
+        if (localUrl?.startsWith("blob:")) URL.revokeObjectURL(localUrl);
+        delete next[deleteTarget.id];
+        return next;
+      });
+      if (selectedProjectId === deleteTarget.id) {
+        setSelectedProjectId("");
+        setDraftProject(null);
+        setTimelineSelection(null);
+        setIsPlaying(false);
+      }
+      setDeleteTarget(null);
+      setSaveStatus("idle");
+    } catch {
+      setSaveStatus("error");
+    } finally {
+      setIsDeleting(false);
+    }
+  }, [cloudEnabled, deleteTarget, selectedProjectId]);
+
   if (!activeProject) {
     return (
       <SidebarProvider
@@ -276,6 +359,7 @@ export function ClipWorkspace({
           onCreateProject={handleCreateProject}
           onSelectProject={handleSelectSavedProject}
           onAttachVideo={() => {}}
+          onDeleteProject={handleRequestDelete}
         />
         <SidebarInset className="flex min-w-0 flex-col items-center justify-center bg-background p-6">
           <p className="max-w-md text-center text-sm text-muted-foreground">
@@ -299,6 +383,7 @@ export function ClipWorkspace({
         onCreateProject={handleCreateProject}
         onSelectProject={handleSelectSavedProject}
         onAttachVideo={(id, file) => void attachVideo(id, file)}
+        onDeleteProject={handleRequestDelete}
       />
       <SidebarInset className="flex min-w-0 flex-col bg-background">
         <ClipGlobalHeader
@@ -341,15 +426,27 @@ export function ClipWorkspace({
             project={activeProject}
             paneOpen={pane4Open}
             cloudEnabled={cloudEnabled}
+            blobUploadEnabled={blobUploadEnabled}
             isOutputRunning={isOutputRunning}
             isSaving={isSaving}
+            isDeleting={isDeleting}
             onTogglePane={() => setPane4Open((v) => !v)}
             onSourceUrlChange={(url) => patchActiveProject({ sourceUrl: url })}
             onRunOutput={handleRunOutput}
             onSave={() => void handleSave()}
+            onDelete={() => handleRequestDelete(activeProject)}
           />
         </div>
       </SidebarInset>
+      <DeleteConfirmDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+        title="プロジェクトを削除しますか？"
+        itemName={deleteTarget?.title ?? ""}
+        onConfirm={() => void handleConfirmDelete()}
+      />
     </SidebarProvider>
   );
 }

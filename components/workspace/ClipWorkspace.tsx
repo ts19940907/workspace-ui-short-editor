@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { upload } from "@vercel/blob/client";
+import { uploadPresigned } from "@vercel/blob/client";
 
 import { type ClipProject, type TimelineSelection } from "@/lib/clip-schema";
 import {
@@ -182,7 +182,7 @@ export function ClipWorkspace({
       setUploadStatus("uploading");
       try {
         const pathname = `videos/${projectId}/${Date.now()}-${file.name}`;
-        const result = await upload(pathname, file, {
+        const result = await uploadPresigned(pathname, file, {
           access: "public",
           handleUploadUrl: "/api/blob/upload",
         });

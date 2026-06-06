@@ -242,50 +242,48 @@ export async function updateProjectForUser(
   );
   const transcriptRows = segmentsToTranscriptRows(project.id, project.segments);
 
-  return db.transaction(async (tx) => {
-    const [row] = await tx
-      .update(clipProjects)
-      .set({
-        title: project.title,
-        sourceUrl: project.sourceUrl ?? null,
-        playheadMs: project.playheadMs,
-        durationMs: project.durationMs,
-        videoFileName: project.videoFileName ?? null,
-        videoBlobUrl: project.videoBlobUrl ?? null,
-        updatedAt: new Date(),
-      })
-      .where(eq(clipProjects.id, project.id))
-      .returning();
+  const [row] = await db
+    .update(clipProjects)
+    .set({
+      title: project.title,
+      sourceUrl: project.sourceUrl ?? null,
+      playheadMs: project.playheadMs,
+      durationMs: project.durationMs,
+      videoFileName: project.videoFileName ?? null,
+      videoBlobUrl: project.videoBlobUrl ?? null,
+      updatedAt: new Date(),
+    })
+    .where(eq(clipProjects.id, project.id))
+    .returning();
 
-    if (!row || row.userId !== userId) return null;
+  if (!row || row.userId !== userId) return null;
 
-    await tx
-      .delete(titleSegments)
-      .where(eq(titleSegments.projectId, project.id));
-    await tx
-      .delete(transcriptSegments)
-      .where(eq(transcriptSegments.projectId, project.id));
+  await db
+    .delete(titleSegments)
+    .where(eq(titleSegments.projectId, project.id));
+  await db
+    .delete(transcriptSegments)
+    .where(eq(transcriptSegments.projectId, project.id));
 
-    if (titleRows.length > 0) {
-      await tx.insert(titleSegments).values(titleRows);
-    }
-    if (transcriptRows.length > 0) {
-      await tx.insert(transcriptSegments).values(transcriptRows);
-    }
+  if (titleRows.length > 0) {
+    await db.insert(titleSegments).values(titleRows);
+  }
+  if (transcriptRows.length > 0) {
+    await db.insert(transcriptSegments).values(transcriptRows);
+  }
 
-    const [savedTitles, savedTranscripts] = await Promise.all([
-      tx
-        .select()
-        .from(titleSegments)
-        .where(eq(titleSegments.projectId, project.id))
-        .orderBy(asc(titleSegments.startMs)),
-      tx
-        .select()
-        .from(transcriptSegments)
-        .where(eq(transcriptSegments.projectId, project.id))
-        .orderBy(asc(transcriptSegments.startMs)),
-    ]);
+  const [savedTitles, savedTranscripts] = await Promise.all([
+    db
+      .select()
+      .from(titleSegments)
+      .where(eq(titleSegments.projectId, project.id))
+      .orderBy(asc(titleSegments.startMs)),
+    db
+      .select()
+      .from(transcriptSegments)
+      .where(eq(transcriptSegments.projectId, project.id))
+      .orderBy(asc(transcriptSegments.startMs)),
+  ]);
 
-    return assembleClipProject(row, savedTitles, savedTranscripts);
-  });
+  return assembleClipProject(row, savedTitles, savedTranscripts);
 }

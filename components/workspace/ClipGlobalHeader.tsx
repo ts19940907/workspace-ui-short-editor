@@ -53,6 +53,9 @@ export function ClipGlobalHeader({
         {uploadStatus === "uploading" ? (
           <Badge variant="secondary">動画アップロード中…</Badge>
         ) : null}
+        {uploadStatus === "error" ? (
+          <Badge variant="destructive">動画アップロード失敗</Badge>
+        ) : null}
         {cloudEnabled && saveStatus !== "idle" ? (
           <Badge
             variant={saveStatus === "error" ? "destructive" : "secondary"}

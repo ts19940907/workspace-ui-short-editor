@@ -26,6 +26,7 @@ import { TitleEditorPane } from "@/components/workspace/TitleEditorPane";
 import { VideoTimelinePane } from "@/components/workspace/VideoTimelinePane";
 import { ClipOutputPane } from "@/components/workspace/ClipOutputPane";
 import { DeleteConfirmDialog } from "@/components/workspace/DeleteConfirmDialog";
+import { toVideoPlaybackUrl } from "@/lib/cloud/blob-video";
 
 type ClipWorkspaceProps = {
   workspaceName: string;
@@ -33,6 +34,39 @@ type ClipWorkspaceProps = {
   cloudEnabled?: boolean;
   blobUploadEnabled?: boolean;
 };
+
+/** Neon に保存できる HTTPS の Blob URL を解決する（blob: はセッション限定のため除外）。 */
+function resolvePersistableVideoUrl(
+  project: ClipProject,
+  sessionUrlByProjectId: Record<string, string>,
+): string | undefined {
+  if (project.videoBlobUrl) return project.videoBlobUrl;
+  const sessionUrl = sessionUrlByProjectId[project.id];
+  if (sessionUrl && !sessionUrl.startsWith("blob:")) return sessionUrl;
+  return undefined;
+}
+
+function migrateVideoBlobUrlKey(
+  urls: Record<string, string>,
+  fromId: string,
+  toId: string,
+): Record<string, string> {
+  if (fromId === toId) return urls;
+  const url = urls[fromId];
+  if (!url) return urls;
+  const next = { ...urls };
+  delete next[fromId];
+  next[toId] = url;
+  return next;
+}
+
+function initialVideoBlobUrls(projects: ClipProject[]): Record<string, string> {
+  const seeded: Record<string, string> = {};
+  for (const project of projects) {
+    if (project.videoBlobUrl) seeded[project.id] = project.videoBlobUrl;
+  }
+  return seeded;
+}
 
 export function ClipWorkspace({
   workspaceName,
@@ -45,7 +79,9 @@ export function ClipWorkspace({
   );
   const [draftProject, setDraftProject] = useState<ClipProject | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState("");
-  const [videoBlobUrls, setVideoBlobUrls] = useState<Record<string, string>>({});
+  const [videoBlobUrls, setVideoBlobUrls] = useState<Record<string, string>>(
+    () => initialVideoBlobUrls(initialSavedProjects),
+  );
   const [timelineSelection, setTimelineSelection] =
     useState<TimelineSelection | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -70,25 +106,10 @@ export function ClipWorkspace({
     [savedProjects],
   );
 
-  const persistProjectToCloud = useCallback(
-    async (project: ClipProject): Promise<ClipProject | null> => {
-      if (!cloudEnabled) return project;
-      try {
-        if (isProjectSavedInCloud(project.id)) {
-          return await saveProjectAction(project);
-        }
-        return null;
-      } catch {
-        setSaveStatus("error");
-        return null;
-      }
-    },
-    [cloudEnabled, isProjectSavedInCloud],
-  );
-
-  const videoUrl = activeProject
+  const rawVideoUrl = activeProject
     ? (videoBlobUrls[activeProject.id] ?? activeProject.videoBlobUrl)
     : undefined;
+  const videoUrl = toVideoPlaybackUrl(rawVideoUrl);
 
   const selectionInfo = useMemo(
     () =>
@@ -124,6 +145,59 @@ export function ClipWorkspace({
       }
     },
     [draftProject],
+  );
+
+  const persistProjectAfterVideoUpload = useCallback(
+    async (
+      project: ClipProject,
+      previousProjectId: string,
+    ): Promise<ClipProject | null> => {
+      if (!cloudEnabled) return project;
+      try {
+        let toPersist: ClipProject = {
+          ...project,
+          isSaved: true,
+          videoBlobUrl: resolvePersistableVideoUrl(project, videoBlobUrls),
+        };
+
+        if (!isProjectSavedInCloud(toPersist.id)) {
+          const created = await createProjectAction(
+            toPersist.title || "新規プロジェクト",
+          );
+          setVideoBlobUrls((prev) =>
+            migrateVideoBlobUrlKey(prev, previousProjectId, created.id),
+          );
+          toPersist = { ...toPersist, id: created.id };
+
+          const wasDraft = draftProject?.id === previousProjectId;
+          if (wasDraft) {
+            setSelectedProjectId(created.id);
+            setDraftProject(null);
+          }
+          setSavedProjects((prev) => {
+            const without = prev.filter(
+              (p) => p.id !== previousProjectId && p.id !== created.id,
+            );
+            return [toPersist, ...without];
+          });
+        }
+
+        const persisted = await saveProjectAction(toPersist);
+        replaceActiveProject(persisted);
+        setSaveStatus("saved");
+        return persisted;
+      } catch {
+        setSaveStatus("error");
+        return null;
+      }
+    },
+    [
+      cloudEnabled,
+      draftProject,
+      isProjectSavedInCloud,
+      replaceActiveProject,
+      videoBlobUrls,
+    ],
   );
 
   const handleCreateProject = useCallback(() => {
@@ -183,7 +257,7 @@ export function ClipWorkspace({
       try {
         const pathname = `videos/${projectId}/${Date.now()}-${file.name}`;
         const result = await uploadPresigned(pathname, file, {
-          access: "public",
+          access: "private",
           handleUploadUrl: "/api/blob/upload",
         });
         setVideoBlobUrls((prev) => ({ ...prev, [projectId]: result.url }));
@@ -202,10 +276,7 @@ export function ClipWorkspace({
           );
         }
 
-        const persisted = await persistProjectToCloud(updatedProject);
-        if (persisted) {
-          replaceActiveProject(persisted);
-        }
+        await persistProjectAfterVideoUpload(updatedProject, projectId);
 
         setUploadStatus("idle");
       } catch {
@@ -216,8 +287,7 @@ export function ClipWorkspace({
       blobUploadEnabled,
       cloudEnabled,
       draftProject,
-      persistProjectToCloud,
-      replaceActiveProject,
+      persistProjectAfterVideoUpload,
       savedProjects,
     ],
   );
@@ -232,10 +302,22 @@ export function ClipWorkspace({
       activeProject.sourceUrl?.replace(/^https?:\/\//, "").slice(0, 40) ||
       `プロジェクト ${savedProjects.length + 1}`;
 
+    const previousProjectId = activeProject.id;
+    const persistableVideoUrl = resolvePersistableVideoUrl(
+      activeProject,
+      videoBlobUrls,
+    );
+    // Blob 有効時は URL が取れない動画メタデータを DB に書かない（ファイル名だけ残る事故を防ぐ）
+    const shouldPersistVideoMeta =
+      Boolean(persistableVideoUrl) || !blobUploadEnabled;
     let toSave: ClipProject = {
       ...activeProject,
       title,
       isSaved: true,
+      videoBlobUrl: persistableVideoUrl,
+      videoFileName: shouldPersistVideoMeta
+        ? activeProject.videoFileName
+        : undefined,
     };
 
     try {
@@ -247,6 +329,9 @@ export function ClipWorkspace({
           toSave = await saveProjectAction(toSave);
         } else {
           const created = await createProjectAction(toSave.title);
+          setVideoBlobUrls((prev) =>
+            migrateVideoBlobUrlKey(prev, previousProjectId, created.id),
+          );
           toSave = {
             ...toSave,
             id: created.id,
@@ -277,7 +362,14 @@ export function ClipWorkspace({
     } finally {
       setIsSaving(false);
     }
-  }, [activeProject, cloudEnabled, draftProject, savedProjects]);
+  }, [
+    activeProject,
+    blobUploadEnabled,
+    cloudEnabled,
+    draftProject,
+    savedProjects,
+    videoBlobUrls,
+  ]);
 
   const handleRunOutput = useCallback(() => {
     if (!activeProject || activeProject.durationMs <= 0) return;

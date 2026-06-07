@@ -5,10 +5,9 @@ export function isCloudEnabled(): boolean {
 
 /** Vercel Blob への動画アップロードが利用可能か。 */
 export function isBlobStorageEnabled(): boolean {
+  // ローカル開発（next dev）では read-write トークンが必要
   if (process.env.BLOB_READ_WRITE_TOKEN) return true;
-  // Vercel Storage 連携（OIDC）: BLOB_STORE_ID + VERCEL_OIDC_TOKEN
-  if (process.env.BLOB_STORE_ID && process.env.VERCEL_OIDC_TOKEN) return true;
-  // Vercel 本番では OIDC トークンが実行時に注入される
+  // Vercel 本番 / Preview のみ OIDC（`vercel env pull` の OIDC はローカルでは使えない）
   if (process.env.BLOB_STORE_ID && process.env.VERCEL) return true;
   return false;
 }

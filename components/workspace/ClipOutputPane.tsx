@@ -126,13 +126,14 @@ export function ClipOutputPane({
             </p>
             {blobUploadEnabled ? (
               <p className="text-xs text-muted-foreground">
-                動画ファイルは Vercel Blob に保存し、URL を clip_project.video_blob_url
-                に記録します。
+                動画ファイルは Vercel Blob（Private）に保存し、URL を
+                clip_project.video_blob_url に記録します。再生はアプリ経由で行います。
               </p>
             ) : cloudEnabled ? (
               <p className="text-xs text-muted-foreground">
-                BLOB_READ_WRITE_TOKEN 未設定のため、動画はブラウザ内のみ再生されます（ファイル名のみ
-                DB に保存可能）。
+                BLOB_READ_WRITE_TOKEN 未設定のため、動画はこのブラウザ内のみ再生されます。リロード後も再生するには
+                .env.local に BLOB_READ_WRITE_TOKEN を設定し、動画を再選択してください（Vercel
+                ダッシュボード → Storage → Blob → Tokens）。
               </p>
             ) : null}
           </Card>

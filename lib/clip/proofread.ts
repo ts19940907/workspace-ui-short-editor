@@ -48,7 +48,7 @@ export function mockProofread(text: string): string {
     return [
       "【モックモード】明らかな形式上の問題は検出されませんでした。",
       "",
-      "より精度の高い誤字脱字・文法チェックには `.env.local` に `OPENAI_API_KEY` を設定してください。",
+      "より精度の高い誤字脱字・文法チェックには `.env.local` に `GEMINI_API_KEY` を設定してください。",
     ].join("\n");
   }
 
@@ -57,7 +57,7 @@ export function mockProofread(text: string): string {
     "",
     ...issues,
     "",
-    "より精度の高いチェックには `.env.local` に `OPENAI_API_KEY` を設定してください。",
+    "より精度の高いチェックには `.env.local` に `GEMINI_API_KEY` を設定してください。",
   ].join("\n");
 }
 

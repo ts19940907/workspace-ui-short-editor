@@ -48,7 +48,13 @@ export function downloadPremiereExport(
   editableTitles: EditableTitleSegment[],
 ): void {
   const safeBase = projectTitle.replace(/[^\w\u3040-\u30ff\u4e00-\u9fff-]+/gu, "_") || "project";
-  downloadTextFile(`${safeBase}_transcript.srt`, transcriptToSrt(segments), "application/x-subrip");
+  if (segments.length > 0) {
+    downloadTextFile(
+      `${safeBase}_transcript.srt`,
+      transcriptToSrt(segments),
+      "application/x-subrip",
+    );
+  }
   downloadTextFile(`${safeBase}_summary.srt`, editableTitlesToSrt(editableTitles), "application/x-subrip");
   downloadTextFile(`${safeBase}_premiere_README.txt`, PREMIERE_README);
 }

@@ -3,8 +3,13 @@
 import { useState } from "react";
 import { FileDown, Save, Sparkles, SpellCheck, Trash2 } from "lucide-react";
 
+import {
+  transcriptToProofreadText,
+  type ClipOutputResponse,
+} from "@/lib/clip/output";
 import { downloadPremiereExport } from "@/lib/clip/srt";
-import type { ClipProject } from "@/lib/clip-schema";
+import { describeSourceUrlSupport, isValidHttpUrl } from "@/lib/clip/source-url";
+import type { ClipProject, TranscriptSegment } from "@/lib/clip-schema";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -17,9 +22,12 @@ import { ProofreadDialog } from "@/components/workspace/ProofreadDialog";
 type ClipOutputPaneProps = {
   project: ClipProject;
   paneOpen: boolean;
+  hasVideoSource?: boolean;
   cloudEnabled?: boolean;
   blobUploadEnabled?: boolean;
   isOutputRunning: boolean;
+  outputError?: string | null;
+  lastOutputMode?: ClipOutputResponse["mode"] | null;
   isSaving: boolean;
   isDeleting?: boolean;
   onTogglePane: () => void;
@@ -27,14 +35,18 @@ type ClipOutputPaneProps = {
   onRunOutput: () => void;
   onSave: () => void;
   onDelete?: () => void;
+  onApplyTranscript?: (segments: TranscriptSegment[]) => void;
 };
 
 export function ClipOutputPane({
   project,
   paneOpen,
+  hasVideoSource = false,
   cloudEnabled = false,
   blobUploadEnabled = false,
   isOutputRunning,
+  outputError = null,
+  lastOutputMode = null,
   isSaving,
   isDeleting = false,
   onTogglePane,
@@ -42,11 +54,19 @@ export function ClipOutputPane({
   onRunOutput,
   onSave,
   onDelete,
+  onApplyTranscript,
 }: ClipOutputPaneProps) {
   const [proofreadOpen, setProofreadOpen] = useState(false);
-  const canExport =
-    project.segments.length > 0 && project.editableTitles.length > 0;
+  const canExport = project.editableTitles.length > 0;
   const isSaved = project.isSaved ?? false;
+  const hasTranscript = project.segments.length > 0;
+  const sourceUrl = project.sourceUrl?.trim() ?? "";
+  const hasSourceUrl = isValidHttpUrl(sourceUrl);
+  const canRunOutput =
+    hasSourceUrl || (hasVideoSource && project.durationMs > 0);
+  const proofreadInitialText = hasTranscript
+    ? transcriptToProofreadText(project.segments)
+    : "";
 
   if (!paneOpen) {
     return (
@@ -81,18 +101,39 @@ export function ClipOutputPane({
               type="button"
               variant="default"
               size="sm"
-              disabled={isOutputRunning || project.durationMs <= 0}
+              disabled={isOutputRunning || !canRunOutput}
               onClick={onRunOutput}
             >
               <Sparkles data-icon="inline-start" />
-              {isOutputRunning
-                ? "AI 処理中…"
-                : "出力（文字起こし・タイトル）"}
+              {isOutputRunning ? "AI 処理中…" : "出力（要約）"}
             </Button>
             <p className="text-xs text-muted-foreground">
-              タイムラインの 3 層（文字起こし・編集可能タイトル・編集不可タイトル）を AI
-              が生成します（現在はモック）。
+              ライブ配信リンク（YouTube 等）からタイムテーブルごとの要約・タイトル案を生成します。YouTube
+              は字幕を取得して要約するため高速です（字幕が無い動画はエラーになります）。
             </p>
+            {hasSourceUrl ? (
+              <p className="text-xs text-muted-foreground">
+                {describeSourceUrlSupport(sourceUrl)}
+                長尺配信は 10 分ごとに分割要約します。混雑時は自動リトライします。
+              </p>
+            ) : null}
+            {!canRunOutput ? (
+              <p className="text-xs text-destructive">
+                ライブ配信リンクを入力するか、左ペインから動画ファイルを添付してください。
+              </p>
+            ) : null}
+            {lastOutputMode === "ai" ? (
+              <p className="text-xs text-muted-foreground">
+                直近の出力: Gemini API による AI 生成
+              </p>
+            ) : lastOutputMode === "mock" ? (
+              <p className="text-xs text-muted-foreground">
+                直近の出力: モック（`GEMINI_API_KEY` 未設定）
+              </p>
+            ) : null}
+            {outputError ? (
+              <p className="text-xs text-destructive">{outputError}</p>
+            ) : null}
           </Card>
 
           <Card className="flex flex-col gap-3 rounded-lg border-border bg-card p-3">
@@ -131,9 +172,8 @@ export function ClipOutputPane({
               </p>
             ) : cloudEnabled ? (
               <p className="text-xs text-muted-foreground">
-                BLOB_READ_WRITE_TOKEN 未設定のため、動画はこのブラウザ内のみ再生されます。リロード後も再生するには
-                .env.local に BLOB_READ_WRITE_TOKEN を設定し、動画を再選択してください（Vercel
-                ダッシュボード → Storage → Blob → Tokens）。
+                BLOB_READ_WRITE_TOKEN / BLOB_WEBHOOK_PUBLIC_KEY 未設定のため、動画はこのブラウザ内のみ再生されます。リロード後も再生するには
+                .env.local に両方を設定し（`vercel env pull --environment=preview`）、動画を再選択してください。
               </p>
             ) : null}
           </Card>
@@ -143,7 +183,8 @@ export function ClipOutputPane({
           <Card className="flex flex-col gap-3 rounded-lg border-border bg-card p-3">
             <h3 className="text-sm font-semibold">Premiere Pro 出力</h3>
             <p className="text-xs text-muted-foreground">
-              transcript.srt（文字起こし）と summary.srt（編集可能タイトル）をダウンロードします。
+              summary.srt（編集可能タイトル）をダウンロードします。文字起こしがある場合は
+              transcript.srt も含まれます。
             </p>
             <Button
               type="button"
@@ -165,21 +206,43 @@ export function ClipOutputPane({
           <Card className="flex flex-col gap-3 rounded-lg border-border bg-card p-3">
             <h3 className="text-sm font-semibold">誤字脱字チェック</h3>
             <p className="text-xs text-muted-foreground">
-              テキストファイルを読み込み、AI
-              による誤字脱字・文法の修正提案を確認できます。
+              テキストファイル、またはプロジェクトの文字起こしを AI
+              で校正できます。`GEMINI_API_KEY` 設定時は Gemini
+              による提案、未設定時は簡易チェックです。
             </p>
+            {hasTranscript ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setProofreadOpen(true)}
+              >
+                <SpellCheck data-icon="inline-start" />
+                文字起こしをチェック
+              </Button>
+            ) : null}
             <Button
               type="button"
               size="sm"
+              variant={hasTranscript ? "outline" : "default"}
               onClick={() => setProofreadOpen(true)}
             >
               <SpellCheck data-icon="inline-start" />
-              誤字脱字チェック
+              {hasTranscript ? "ファイルからチェック" : "誤字脱字チェック"}
             </Button>
           </Card>
         </div>
       </ScrollArea>
-      <ProofreadDialog open={proofreadOpen} onOpenChange={setProofreadOpen} />
+      <ProofreadDialog
+        open={proofreadOpen}
+        onOpenChange={setProofreadOpen}
+        initialText={proofreadInitialText}
+        initialLabel={
+          hasTranscript ? "プロジェクトの文字起こし" : undefined
+        }
+        transcriptSegments={hasTranscript ? project.segments : undefined}
+        onApplyTranscript={onApplyTranscript}
+      />
     </aside>
   );
 }

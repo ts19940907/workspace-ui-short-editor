@@ -3,7 +3,9 @@
 import { useCallback, useRef, useState } from "react";
 import { FileText, Loader2, SpellCheck, Upload } from "lucide-react";
 
+import { applyProofreadToTranscript } from "@/lib/clip/output";
 import { requestProofread } from "@/lib/clip/proofread";
+import type { TranscriptSegment } from "@/lib/clip-schema";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -20,6 +22,10 @@ import { cn } from "@/lib/utils";
 type ProofreadDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  initialText?: string;
+  initialLabel?: string;
+  transcriptSegments?: TranscriptSegment[];
+  onApplyTranscript?: (segments: TranscriptSegment[]) => void;
 };
 
 function isTextFile(file: File): boolean {
@@ -32,11 +38,19 @@ function isTextFile(file: File): boolean {
   );
 }
 
-export function ProofreadDialog({ open, onOpenChange }: ProofreadDialogProps) {
+export function ProofreadDialog({
+  open,
+  onOpenChange,
+  initialText = "",
+  initialLabel,
+  transcriptSegments,
+  onApplyTranscript,
+}: ProofreadDialogProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [result, setResult] = useState("");
+  const [mode, setMode] = useState<"ai" | "mock" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
@@ -45,6 +59,7 @@ export function ProofreadDialog({ open, onOpenChange }: ProofreadDialogProps) {
     setFileName(null);
     setText("");
     setResult("");
+    setMode(null);
     setError(null);
     setIsDragging(false);
     setIsRunning(false);
@@ -59,6 +74,7 @@ export function ProofreadDialog({ open, onOpenChange }: ProofreadDialogProps) {
     setFileName(file.name);
     setText(content);
     setResult("");
+    setMode(null);
     setError(null);
   }, []);
 
@@ -79,6 +95,7 @@ export function ProofreadDialog({ open, onOpenChange }: ProofreadDialogProps) {
     try {
       const response = await requestProofread(text);
       setResult(response.result);
+      setMode(response.mode);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -86,14 +103,36 @@ export function ProofreadDialog({ open, onOpenChange }: ProofreadDialogProps) {
     }
   }, [text]);
 
+  const correctedLines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  const canApplyToTranscript =
+    Boolean(transcriptSegments?.length) &&
+    Boolean(onApplyTranscript) &&
+    correctedLines.length === transcriptSegments?.length;
+
+  const handleOpenChange = useCallback(
+    (next: boolean) => {
+      if (next) {
+        setText(initialText);
+        setFileName(initialText.trim() ? (initialLabel ?? null) : null);
+        setResult("");
+        setMode(null);
+        setError(null);
+        setIsDragging(false);
+        setIsRunning(false);
+      } else {
+        resetState();
+      }
+      onOpenChange(next);
+    },
+    [initialLabel, initialText, onOpenChange, resetState],
+  );
+
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        onOpenChange(next);
-        if (!next) resetState();
-      }}
-    >
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>誤字脱字チェック</DialogTitle>
@@ -179,7 +218,14 @@ export function ProofreadDialog({ open, onOpenChange }: ProofreadDialogProps) {
 
           {result ? (
             <div className="flex flex-col gap-2">
-              <Label>校正結果</Label>
+              <Label>
+                校正結果
+                {mode === "ai"
+                  ? "（Gemini）"
+                  : mode === "mock"
+                    ? "（モック）"
+                    : ""}
+              </Label>
               <ScrollArea className="max-h-64 rounded-lg border border-border bg-card p-3">
                 <p className="whitespace-pre-wrap text-sm text-foreground">
                   {result}
@@ -189,7 +235,25 @@ export function ProofreadDialog({ open, onOpenChange }: ProofreadDialogProps) {
           ) : null}
         </div>
 
-        <DialogFooter className="sm:justify-center">
+        <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-center">
+          {canApplyToTranscript && transcriptSegments ? (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                const next = applyProofreadToTranscript(
+                  transcriptSegments,
+                  text,
+                );
+                if (next) {
+                  onApplyTranscript?.(next);
+                  handleOpenChange(false);
+                }
+              }}
+            >
+              修正テキストを文字起こしに反映
+            </Button>
+          ) : null}
           <Button
             type="button"
             disabled={!text.trim() || isRunning}

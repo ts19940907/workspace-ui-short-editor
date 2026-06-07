@@ -18,7 +18,10 @@ const MAX_VIDEO_BYTES = 1024 * 1024 * 1024;
 
 export async function POST(request: Request): Promise<Response> {
   if (!isCloudEnabled() || !isBlobStorageEnabled()) {
-    return new Response("Blob storage is not configured", { status: 503 });
+    const message = process.env.BLOB_READ_WRITE_TOKEN
+      ? "BLOB_WEBHOOK_PUBLIC_KEY が未設定です（vercel env pull --environment=preview で取得）"
+      : "Blob storage is not configured";
+    return new Response(message, { status: 503 });
   }
 
   const userId = getOwnerUserId();

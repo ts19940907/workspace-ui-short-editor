@@ -9,7 +9,7 @@ import {
   deleteProjectAction,
   saveProjectAction,
 } from "@/lib/clip/actions";
-import { mockRunAiOutput } from "@/lib/clip/mock-pipeline";
+import { requestClipOutput } from "@/lib/clip/output";
 import {
   createEmptyProject,
   getSelectedSegmentInfo,
@@ -87,6 +87,10 @@ export function ClipWorkspace({
   const [isPlaying, setIsPlaying] = useState(false);
   const [pane4Open, setPane4Open] = useState(true);
   const [isOutputRunning, setIsOutputRunning] = useState(false);
+  const [outputError, setOutputError] = useState<string | null>(null);
+  const [lastOutputMode, setLastOutputMode] = useState<"ai" | "mock" | null>(
+    null,
+  );
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [uploadStatus, setUploadStatus] = useState<
@@ -371,18 +375,52 @@ export function ClipWorkspace({
     videoBlobUrls,
   ]);
 
-  const handleRunOutput = useCallback(() => {
-    if (!activeProject || activeProject.durationMs <= 0) return;
+  const handleRunOutput = useCallback(async () => {
+    if (!activeProject) return;
+
+    const sourceUrl = activeProject.sourceUrl?.trim();
+    const rawVideoUrl =
+      videoBlobUrls[activeProject.id] ?? activeProject.videoBlobUrl;
+    const hasSourceUrl = Boolean(sourceUrl);
+    const hasLocalVideo = Boolean(rawVideoUrl);
+
+    if (!hasSourceUrl && !hasLocalVideo) return;
+    if (!hasSourceUrl && activeProject.durationMs <= 0) return;
+
     setIsOutputRunning(true);
-    window.setTimeout(() => {
-      const ai = mockRunAiOutput(activeProject.durationMs);
+    setOutputError(null);
+
+    try {
+      const result = await requestClipOutput({
+        sourceUrl: sourceUrl || undefined,
+        durationMs: activeProject.durationMs,
+        videoUrl:
+          !hasSourceUrl &&
+          rawVideoUrl &&
+          !rawVideoUrl.startsWith("blob:")
+            ? rawVideoUrl
+            : undefined,
+        videoFileName: activeProject.videoFileName,
+        localVideoUrl:
+          !hasSourceUrl && rawVideoUrl?.startsWith("blob:")
+            ? rawVideoUrl
+            : undefined,
+      });
+
+      setLastOutputMode(result.mode);
       replaceActiveProject({
         ...activeProject,
-        ...ai,
+        durationMs: result.durationMs ?? activeProject.durationMs,
+        segments: result.segments,
+        readOnlyTitles: result.readOnlyTitles,
+        editableTitles: result.editableTitles,
       });
+    } catch (error) {
+      setOutputError((error as Error).message);
+    } finally {
       setIsOutputRunning(false);
-    }, 900);
-  }, [activeProject, replaceActiveProject]);
+    }
+  }, [activeProject, replaceActiveProject, videoBlobUrls]);
 
   const handleSelectionTextSave = useCallback(
     (text: string) => {
@@ -517,16 +555,22 @@ export function ClipWorkspace({
           <ClipOutputPane
             project={activeProject}
             paneOpen={pane4Open}
+            hasVideoSource={Boolean(rawVideoUrl)}
             cloudEnabled={cloudEnabled}
             blobUploadEnabled={blobUploadEnabled}
             isOutputRunning={isOutputRunning}
+            outputError={outputError}
+            lastOutputMode={lastOutputMode}
             isSaving={isSaving}
             isDeleting={isDeleting}
             onTogglePane={() => setPane4Open((v) => !v)}
             onSourceUrlChange={(url) => patchActiveProject({ sourceUrl: url })}
-            onRunOutput={handleRunOutput}
+            onRunOutput={() => void handleRunOutput()}
             onSave={() => void handleSave()}
             onDelete={() => handleRequestDelete(activeProject)}
+            onApplyTranscript={(segments) =>
+              patchActiveProject({ segments })
+            }
           />
         </div>
       </SidebarInset>

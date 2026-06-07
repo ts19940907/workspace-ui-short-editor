@@ -181,12 +181,19 @@ export function mockGenerateEditableTitles(
 }
 
 /** 出力ボタン用: 文字起こし + 3 層タイムラインを一括生成（モック） */
-export function mockRunAiOutput(durationMs: number): Pick<
-  ClipProject,
-  "segments" | "readOnlyTitles" | "editableTitles"
-> {
-  const segments = mockTranscribe(durationMs);
+export function mockRunAiOutput(
+  durationMs: number,
+  outputMode: "full" | "summaryOnly" = "summaryOnly",
+): Pick<ClipProject, "segments" | "readOnlyTitles" | "editableTitles"> {
   const readOnlyTitles = mockGenerateReadOnlyTitles(durationMs);
+  if (outputMode === "summaryOnly") {
+    const editableTitles = mockGenerateEditableTitles([], durationMs).map(
+      (item) => ({ ...item, sourceSegmentIds: [] }),
+    );
+    return { segments: [], readOnlyTitles, editableTitles };
+  }
+
+  const segments = mockTranscribe(durationMs);
   const editableTitles = mockGenerateEditableTitles(segments, durationMs);
   return { segments, readOnlyTitles, editableTitles };
 }

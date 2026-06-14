@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  assignTopicTimeRangesFromSegments,
+  compressSegmentsForTitleGeneration,
+  normalizeTopicTimeline,
   topicsToTitleLayers,
   whisperSegmentsToTranscript,
 } from "@/lib/clip/ai-output";
@@ -77,6 +80,74 @@ describe("topicsToTitleLayers", () => {
       },
     ]);
     expect(layers.editableTitles[0]?.text).toBe("配信開始の挨拶");
+  });
+});
+
+describe("topic timeline helpers", () => {
+  it("aligns overlapping topics without rewriting end times to duration", () => {
+    const topics = normalizeTopicTimeline(
+      [
+        {
+          startMs: 0,
+          endMs: 30_000,
+          topicLabel: "A",
+          summaryText: "a",
+          sourceSegmentIds: [],
+        },
+        {
+          startMs: 10_000,
+          endMs: 50_000,
+          topicLabel: "B",
+          summaryText: "b",
+          sourceSegmentIds: [],
+        },
+      ],
+      120_000,
+    );
+
+    expect(topics).toHaveLength(2);
+    expect(topics[0]?.startMs).toBe(0);
+    expect(topics[0]?.endMs).toBe(30_000);
+    expect(topics[1]?.startMs).toBe(30_000);
+    expect(topics[1]?.endMs).toBe(50_000);
+  });
+
+  it("assigns topic ranges from transcript segment timestamps", () => {
+    const segments = [
+      { id: "seg-1", startMs: 0, endMs: 30_000, text: "A" },
+      { id: "seg-2", startMs: 30_000, endMs: 60_000, text: "B" },
+      { id: "seg-3", startMs: 60_000, endMs: 90_000, text: "C" },
+    ];
+
+    const topics = assignTopicTimeRangesFromSegments(
+      [
+        { topicLabel: "前半", summaryText: "a" },
+        { topicLabel: "後半", summaryText: "b" },
+      ],
+      segments,
+    );
+
+    expect(topics[0]).toMatchObject({
+      startMs: 0,
+      endMs: 30_000,
+      sourceSegmentIds: ["seg-1"],
+    });
+    expect(topics[1]).toMatchObject({
+      startMs: 30_000,
+      endMs: 90_000,
+      sourceSegmentIds: ["seg-2", "seg-3"],
+    });
+  });
+
+  it("compresses long transcript lists for title generation", () => {
+    const segments = Array.from({ length: 240 }, (_, index) => ({
+      id: `seg-${index + 1}`,
+      startMs: index * 1000,
+      endMs: (index + 1) * 1000,
+      text: `line ${index + 1}`,
+    }));
+
+    expect(compressSegmentsForTitleGeneration(segments)).toHaveLength(120);
   });
 });
 

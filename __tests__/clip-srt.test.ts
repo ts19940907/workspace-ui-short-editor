@@ -1,7 +1,12 @@
 import { describe, it, expect } from "vitest";
 
 import { formatSrtTime } from "@/lib/clip/time";
-import { editableTitlesToSrt, segmentsToSrt } from "@/lib/clip/srt";
+import {
+  countSrtCues,
+  editableTitlesToSrt,
+  prepareTimedTextForSrt,
+  segmentsToSrt,
+} from "@/lib/clip/srt";
 
 describe("clip SRT export", () => {
   it("formats SRT timestamps", () => {
@@ -14,6 +19,18 @@ describe("clip SRT export", () => {
     ]);
     expect(srt).toContain("00:00:00,000 --> 00:00:02,000");
     expect(srt).toContain("こんにちは");
+    expect(srt.startsWith("\uFEFF")).toBe(true);
+  });
+
+  it("exports all cues including short durations", () => {
+    const segments = Array.from({ length: 107 }, (_, index) => ({
+      startMs: index * 30_000,
+      endMs: index * 30_000 + 100,
+      text: `line ${index + 1}`,
+    }));
+
+    expect(countSrtCues(segments)).toBe(107);
+    expect(prepareTimedTextForSrt(segments)).toHaveLength(107);
   });
 
   it("builds editable title SRT", () => {

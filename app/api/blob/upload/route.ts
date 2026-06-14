@@ -47,9 +47,6 @@ export async function POST(request: Request): Promise<Response> {
           },
         };
       },
-      onUploadCompleted: async () => {
-        // クライアント側で saveProjectAction により URL を永続化する
-      },
     });
     return Response.json(jsonResponse);
   } catch (error) {

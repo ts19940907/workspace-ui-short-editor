@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -50,11 +50,22 @@ export function TitleEditorPane({
 }: TitleEditorPaneProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const seekingRef = useRef(false);
+  const metadataReadyRef = useRef(false);
+  const [videoError, setVideoError] = useState<string | null>(null);
+
+  useEffect(() => {
+    metadataReadyRef.current = false;
+    setVideoError(null);
+  }, [videoUrl]);
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !videoUrl) return;
-    const targetSec = playheadMs / 1000;
+    if (!video || !videoUrl || !metadataReadyRef.current) return;
+    const maxSec =
+      Number.isFinite(video.duration) && video.duration > 0
+        ? video.duration
+        : playheadMs / 1000;
+    const targetSec = Math.min(playheadMs / 1000, maxSec);
     if (Math.abs(video.currentTime - targetSec) > 0.05) {
       seekingRef.current = true;
       video.currentTime = targetSec;
@@ -75,12 +86,23 @@ export function TitleEditorPane({
     onPlayheadChange(Math.round(video.currentTime * 1000));
   };
 
+  const safePlay = useCallback(async (video: HTMLVideoElement) => {
+    try {
+      await video.play();
+      onPlayingChange(true);
+    } catch (error) {
+      // play() 中に pause / seek されると AbortError になる（表示自体は問題ない）
+      if ((error as Error).name !== "AbortError") {
+        throw error;
+      }
+    }
+  }, [onPlayingChange]);
+
   const togglePlay = async () => {
     const video = videoRef.current;
     if (!video) return;
     if (video.paused) {
-      await video.play();
-      onPlayingChange(true);
+      await safePlay(video);
     } else {
       video.pause();
       onPlayingChange(false);
@@ -138,24 +160,47 @@ export function TitleEditorPane({
         )}
       </div>
 
-      <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-lg bg-muted">
+      <div className="relative flex min-h-48 flex-1 basis-0 items-center justify-center overflow-hidden rounded-lg bg-muted">
         {videoUrl ? (
-          <video
-            ref={videoRef}
-            src={videoUrl}
-            className="max-h-full max-w-full"
-            onLoadedMetadata={(e) => {
-              const dur = Math.round(e.currentTarget.duration * 1000);
-              if (Number.isFinite(dur)) onDurationChange(dur);
-            }}
-            onTimeUpdate={handleTimeUpdate}
-            onSeeked={() => {
-              seekingRef.current = false;
-            }}
-            onEnded={() => onPlayingChange(false)}
-            onPlay={() => onPlayingChange(true)}
-            onPause={() => onPlayingChange(false)}
-          />
+          <>
+            <video
+              ref={videoRef}
+              key={videoUrl}
+              src={videoUrl}
+              preload="auto"
+              playsInline
+              className="size-full object-contain"
+              onLoadedMetadata={(e) => {
+                const video = e.currentTarget;
+                const dur = Math.round(video.duration * 1000);
+                if (Number.isFinite(dur)) onDurationChange(dur);
+                metadataReadyRef.current = true;
+                const maxSec = Number.isFinite(video.duration) ? video.duration : 0;
+                const targetSec = Math.min(playheadMs / 1000, maxSec);
+                if (Math.abs(video.currentTime - targetSec) > 0.05) {
+                  seekingRef.current = true;
+                  video.currentTime = targetSec;
+                }
+              }}
+              onTimeUpdate={handleTimeUpdate}
+              onSeeked={() => {
+                seekingRef.current = false;
+              }}
+              onEnded={() => onPlayingChange(false)}
+              onPlay={() => onPlayingChange(true)}
+              onPause={() => onPlayingChange(false)}
+              onError={() => {
+                setVideoError(
+                  "動画の読み込みに失敗しました。ファイルを再選択するか、ページを再読み込みしてください。",
+                );
+              }}
+            />
+            {videoError ? (
+              <p className="absolute inset-x-0 bottom-2 px-3 text-center text-xs text-destructive">
+                {videoError}
+              </p>
+            ) : null}
+          </>
         ) : (
           <p className="px-4 text-center text-sm text-muted-foreground">
             左ペインでプロジェクトを作成し、ローカル動画を選択してください

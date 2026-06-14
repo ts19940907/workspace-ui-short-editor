@@ -14,7 +14,7 @@ export const clipOutputJsonRequestSchema = z.object({
   sourceUrl: z.string().url().optional(),
   videoUrl: z.string().url().optional(),
   videoFileName: z.string().optional(),
-  outputMode: clipOutputModeSchema.default("summaryOnly"),
+  outputMode: clipOutputModeSchema.default("full"),
 });
 
 export const clipOutputResponseSchema = z.object({
@@ -82,7 +82,7 @@ export async function requestClipOutput(
     videoUrl,
     videoFileName,
     localVideoUrl,
-    outputMode = "summaryOnly",
+    outputMode = "full",
   } = options;
 
   const trimmedSource = sourceUrl?.trim();

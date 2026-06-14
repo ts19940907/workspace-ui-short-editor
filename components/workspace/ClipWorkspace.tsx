@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { uploadPresigned } from "@vercel/blob/client";
 
 import { type ClipProject, type TimelineSelection } from "@/lib/clip-schema";
@@ -26,7 +26,10 @@ import { TitleEditorPane } from "@/components/workspace/TitleEditorPane";
 import { VideoTimelinePane } from "@/components/workspace/VideoTimelinePane";
 import { ClipOutputPane } from "@/components/workspace/ClipOutputPane";
 import { DeleteConfirmDialog } from "@/components/workspace/DeleteConfirmDialog";
-import { toVideoPlaybackUrl } from "@/lib/cloud/blob-video";
+import {
+  sanitizeBlobUploadFileName,
+  toVideoPlaybackUrl,
+} from "@/lib/cloud/blob-video";
 
 type ClipWorkspaceProps = {
   workspaceName: string;
@@ -68,6 +71,8 @@ function initialVideoBlobUrls(projects: ClipProject[]): Record<string, string> {
   return seeded;
 }
 
+const SELECTED_PROJECT_STORAGE_KEY = "clip-selected-project-id";
+
 export function ClipWorkspace({
   workspaceName,
   initialSavedProjects,
@@ -98,6 +103,18 @@ export function ClipWorkspace({
   >("idle");
   const [deleteTarget, setDeleteTarget] = useState<ClipProject | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  useEffect(() => {
+    if (selectedProjectId !== "") return;
+    const storedId = sessionStorage.getItem(SELECTED_PROJECT_STORAGE_KEY);
+    if (storedId && savedProjects.some((p) => p.id === storedId)) {
+      setSelectedProjectId(storedId);
+      return;
+    }
+    if (savedProjects.length > 0) {
+      setSelectedProjectId(savedProjects[0].id);
+    }
+  }, [savedProjects, selectedProjectId]);
 
   const activeProject = useMemo(() => {
     if (draftProject?.id === selectedProjectId) return draftProject;
@@ -208,6 +225,7 @@ export function ClipWorkspace({
     const next = createEmptyProject(savedProjects.length + 1);
     setDraftProject(next);
     setSelectedProjectId(next.id);
+    sessionStorage.setItem(SELECTED_PROJECT_STORAGE_KEY, next.id);
     setTimelineSelection(null);
     setIsPlaying(false);
   }, [savedProjects.length]);
@@ -215,6 +233,7 @@ export function ClipWorkspace({
   const handleSelectSavedProject = useCallback((id: string) => {
     setDraftProject(null);
     setSelectedProjectId(id);
+    sessionStorage.setItem(SELECTED_PROJECT_STORAGE_KEY, id);
     setTimelineSelection(null);
     setIsPlaying(false);
   }, []);
@@ -244,7 +263,8 @@ export function ClipWorkspace({
         editableTitles: [],
         readOnlyTitles: [],
         durationMs: 0,
-        videoBlobUrl: undefined,
+        // アップロード成功まで既存 URL を残す（失敗時の再読み込みで消えないように）
+        videoBlobUrl: previous.videoBlobUrl,
       };
 
       if (draftProject?.id === projectId) {
@@ -259,7 +279,7 @@ export function ClipWorkspace({
 
       setUploadStatus("uploading");
       try {
-        const pathname = `videos/${projectId}/${Date.now()}-${file.name}`;
+        const pathname = `videos/${projectId}/${Date.now()}-${sanitizeBlobUploadFileName(file.name)}`;
         const result = await uploadPresigned(pathname, file, {
           access: "private",
           handleUploadUrl: "/api/blob/upload",

@@ -183,7 +183,7 @@ export function mockGenerateEditableTitles(
 /** 出力ボタン用: 文字起こし + 3 層タイムラインを一括生成（モック） */
 export function mockRunAiOutput(
   durationMs: number,
-  outputMode: "full" | "summaryOnly" = "summaryOnly",
+  outputMode: "full" | "summaryOnly" = "full",
 ): Pick<ClipProject, "segments" | "readOnlyTitles" | "editableTitles"> {
   const readOnlyTitles = mockGenerateReadOnlyTitles(durationMs);
   if (outputMode === "summaryOnly") {

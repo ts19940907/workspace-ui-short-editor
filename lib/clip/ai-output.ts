@@ -21,7 +21,9 @@ import {
   parseGeminiJsonText,
 } from "@/lib/clip/gemini";
 import { isValidHttpUrl, isYoutubeUrl, normalizeSourceUrl } from "@/lib/clip/source-url";
+import { removeTranscriptFillers } from "@/lib/clip/transcript-display";
 import {
+  captionsToTranscriptSegments,
   fetchYoutubeCaptions,
   prepareCaptionSummaryInput,
   splitCaptionsByDuration,
@@ -108,6 +110,7 @@ JSON 形式で出力:
 - 日本語で出力
 - 入力の [M:SS-M:SS] タイムスタンプを参照し、topics の startMs/endMs をミリ秒整数で正確に設定する
 - topics は 3〜8 セクション程度（長尺配信は 6〜10 も可）
++- 各区間は重ならない。1 チャンクあたり最大 3 セクション
 - topicLabel は短い見出し、summaryText は 1 行要約
 - durationMs は最後の topic の endMs または入力末尾の時刻から推定
 - sourceSegmentIds は空配列 [] でよい`;
@@ -180,7 +183,8 @@ JSON 形式で出力:
 - 意味のまとまりごとにセグメントを分ける（目安: 5〜20 秒）
 - startMs/endMs はミリ秒整数
 - 最初のセグメントは startMs: 0 から始める
-- 口語はそのまま、フィラー（えー、あの）は適度に残す`;
+- フィラー（えー、あの、えっと等）は書かない
+- 1 セグメント = 1 文（「。」で終わる単位）`;
 
 const TITLE_SYSTEM_PROMPT = `あなたはライブ配信の切り抜き編集者です。文字起こしセグメントを話題ごとにグループ化し、Premiere 用のタイトルテロップ案を作成してください。
 
@@ -214,12 +218,19 @@ export function normalizeTranscriptSegments(
   segments: z.infer<typeof geminiTranscriptSegmentSchema>[],
 ): TranscriptSegment[] {
   return segments
-    .map((seg, index) => ({
-      id: `seg-${index + 1}`,
-      startMs: Math.max(0, seg.startMs),
-      endMs: Math.max(0, seg.endMs),
-      text: seg.text.trim(),
-    }))
+    .map((seg, index) => {
+      const startMs = Math.max(0, seg.startMs);
+      let endMs = Math.max(0, seg.endMs);
+      if (endMs <= startMs) {
+        endMs = startMs + 1000;
+      }
+      return {
+        id: `seg-${index + 1}`,
+        startMs,
+        endMs,
+        text: removeTranscriptFillers(seg.text.trim()),
+      };
+    })
     .filter((seg) => seg.text.length > 0);
 }
 
@@ -256,6 +267,114 @@ export function topicsToTitleLayers(
   }));
 
   return { readOnlyTitles, editableTitles };
+}
+
+const MAX_SEGMENTS_FOR_TITLE_GENERATION = 120;
+export function normalizeTopicTimeline(
+  topics: z.infer<typeof aiTopicSchema>[],
+  durationMs: number,
+): z.infer<typeof aiTopicSchema>[] {
+  const clamped = topics
+    .map((topic) => {
+      const startMs = Math.max(0, Math.min(topic.startMs, durationMs));
+      const endMs = Math.max(
+        startMs + 1000,
+        Math.min(topic.endMs, durationMs),
+      );
+      return { ...topic, startMs, endMs };
+    })
+    .filter((topic) => topic.endMs > topic.startMs)
+    .sort((a, b) => a.startMs - b.startMs);
+
+  const aligned: z.infer<typeof aiTopicSchema>[] = [];
+  for (const topic of clamped) {
+    const prev = aligned[aligned.length - 1];
+    const startMs = prev && topic.startMs < prev.endMs ? prev.endMs : topic.startMs;
+    if (topic.endMs <= startMs) continue;
+    aligned.push({ ...topic, startMs });
+  }
+
+  return aligned;
+}
+
+type TopicMeta = Pick<
+  z.infer<typeof aiTopicSchema>,
+  "topicLabel" | "summaryText"
+> & {
+  sourceSegmentIds?: string[];
+  startMs?: number;
+  endMs?: number;
+};
+
+/** 話題ラベルに、文字起こしセグメントの実タイムスタンプを割り当てる（Premiere/SRT 同期用） */
+export function assignTopicTimeRangesFromSegments(
+  topics: TopicMeta[],
+  segments: TranscriptSegment[],
+): z.infer<typeof aiTopicSchema>[] {
+  if (topics.length === 0) return [];
+
+  if (segments.length === 0) {
+    return topics
+      .map((topic) => ({
+        topicLabel: topic.topicLabel,
+        summaryText: topic.summaryText,
+        sourceSegmentIds: topic.sourceSegmentIds ?? [],
+        startMs: topic.startMs ?? 0,
+        endMs: topic.endMs ?? 0,
+      }))
+      .filter((topic) => topic.endMs > topic.startMs);
+  }
+
+  return topics
+    .map((topic, index) => {
+      const startIndex = Math.floor((index * segments.length) / topics.length);
+      const endIndex = Math.floor(((index + 1) * segments.length) / topics.length);
+      const chunk = segments.slice(
+        startIndex,
+        Math.max(endIndex, startIndex + 1),
+      );
+      if (chunk.length === 0) return null;
+
+      const first = chunk[0];
+      const last = chunk[chunk.length - 1];
+      if (!first || !last) return null;
+
+      return {
+        topicLabel: topic.topicLabel,
+        summaryText: topic.summaryText,
+        sourceSegmentIds: chunk.map((seg) => seg.id),
+        startMs: first.startMs,
+        endMs: last.endMs,
+      };
+    })
+    .filter((topic): topic is z.infer<typeof aiTopicSchema> => topic !== null);
+}
+
+/** 長尺文字起こしを要約 API 向けに間引く（タイムスタンプは保持） */
+export function compressSegmentsForTitleGeneration(
+  segments: TranscriptSegment[],
+  maxCount = MAX_SEGMENTS_FOR_TITLE_GENERATION,
+): TranscriptSegment[] {
+  if (segments.length <= maxCount) return segments;
+
+  const bucketSize = Math.ceil(segments.length / maxCount);
+  const compressed: TranscriptSegment[] = [];
+
+  for (let index = 0; index < segments.length; index += bucketSize) {
+    const bucket = segments.slice(index, index + bucketSize);
+    const first = bucket[0];
+    const last = bucket[bucket.length - 1];
+    if (!first || !last) continue;
+
+    compressed.push({
+      id: first.id,
+      startMs: first.startMs,
+      endMs: last.endMs,
+      text: bucket.map((seg) => seg.text).join(" "),
+    });
+  }
+
+  return compressed;
 }
 
 function inferDurationMs(
@@ -318,40 +437,74 @@ async function summarizeCaptionChunk(
   return parsed.topics;
 }
 
-async function summarizeYoutubeFromCaptions(
+async function processYoutubeFromCaptions(
   sourceUrl: string,
   fallbackDurationMs: number,
+  outputMode: ClipOutputMode,
 ): Promise<AiClipOutput> {
-  const captions = await fetchYoutubeCaptions(sourceUrl);
-  const captionDurationMs = captions.reduce(
+  const { lines: captions, durationMs: youtubeDurationMs } =
+    await fetchYoutubeCaptions(sourceUrl);
+  const captionEndMs = captions.reduce(
     (max, line) => Math.max(max, line.endMs),
     0,
   );
-
-  const chunks = splitCaptionsByDuration(captions, 600_000);
-  const topics: z.infer<typeof aiTopicSchema>[] = [];
-
-  for (const chunk of chunks) {
-    const chunkStart = chunk[0]?.startMs ?? 0;
-    const chunkEnd = chunk.reduce((max, line) => Math.max(max, line.endMs), 0);
-    const rangeLabel = `${Math.floor(chunkStart / 60_000)}:${String(Math.floor((chunkStart % 60_000) / 1000)).padStart(2, "0")} 〜 ${Math.floor(chunkEnd / 60_000)}:${String(Math.floor((chunkEnd % 60_000) / 1000)).padStart(2, "0")}`;
-    const chunkTopics = await summarizeCaptionChunk(sourceUrl, chunk, rangeLabel);
-    topics.push(...chunkTopics);
-  }
-
-  topics.sort((a, b) => a.startMs - b.startMs);
-
-  const titled = topicsToTitleLayers(topics);
-  const durationMs = inferDurationMs(
-    [],
-    topics,
-    captionDurationMs || fallbackDurationMs,
+  const durationMs = youtubeDurationMs || captionEndMs || fallbackDurationMs;
+  const segments = normalizeTranscriptSegments(
+    captionsToTranscriptSegments(captions),
   );
 
-  return {
-    segments: [],
-    ...titled,
+  if (outputMode === "summaryOnly") {
+    const chunks = splitCaptionsByDuration(captions, 600_000);
+    const topicMeta: TopicMeta[] = [];
+
+    for (const chunk of chunks) {
+      const chunkStart = chunk[0]?.startMs ?? 0;
+      const chunkEnd = chunk.reduce((max, line) => Math.max(max, line.endMs), 0);
+      const rangeLabel = `${Math.floor(chunkStart / 60_000)}:${String(Math.floor((chunkStart % 60_000) / 1000)).padStart(2, "0")} 〜 ${Math.floor(chunkEnd / 60_000)}:${String(Math.floor((chunkEnd % 60_000) / 1000)).padStart(2, "0")}`;
+      const chunkTopics = await summarizeCaptionChunk(
+        sourceUrl,
+        chunk,
+        rangeLabel,
+      );
+      topicMeta.push(
+        ...chunkTopics.map((topic) => ({
+          topicLabel: topic.topicLabel,
+          summaryText: topic.summaryText,
+        })),
+      );
+    }
+
+    const chunkSegments = normalizeTranscriptSegments(
+      captionsToTranscriptSegments(captions),
+    );
+    const topics = assignTopicTimeRangesFromSegments(topicMeta, chunkSegments);
+    const titled = topicsToTitleLayers(topics);
+
+    return {
+      segments: [],
+      ...titled,
+      durationMs: inferDurationMs([], topics, durationMs),
+      mode: "ai",
+    };
+  }
+
+  const titled = await generateTitlesFromTranscript(
+    compressSegmentsForTitleGeneration(segments),
     durationMs,
+  );
+  const topics = assignTopicTimeRangesFromSegments(
+    titled.editableTitles.map((item) => ({
+      topicLabel: item.topicLabel,
+      summaryText: item.text,
+    })),
+    segments,
+  );
+  const layers = topicsToTitleLayers(topics);
+
+  return {
+    segments,
+    ...layers,
+    durationMs: inferDurationMs(segments, topics, durationMs),
     mode: "ai",
   };
 }
@@ -363,8 +516,12 @@ async function analyzeLiveStreamUrl(
 ): Promise<AiClipOutput> {
   const normalizedUrl = normalizeSourceUrl(sourceUrl);
 
-  if (outputMode === "summaryOnly" && isYoutubeUrl(normalizedUrl)) {
-    return summarizeYoutubeFromCaptions(normalizedUrl, fallbackDurationMs);
+  if (isYoutubeUrl(normalizedUrl)) {
+    return processYoutubeFromCaptions(
+      normalizedUrl,
+      fallbackDurationMs,
+      outputMode,
+    );
   }
 
   if (outputMode === "summaryOnly") {
@@ -570,7 +727,7 @@ export async function runAiClipOutput(options: {
     videoUrl,
     videoFileName,
     videoBlob,
-    outputMode = "summaryOnly",
+    outputMode = "full",
   } = options;
   const normalizedSource = sourceUrl?.trim();
   const hasSourceUrl = Boolean(normalizedSource && isValidHttpUrl(normalizedSource));

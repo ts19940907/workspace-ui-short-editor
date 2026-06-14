@@ -108,6 +108,7 @@ type BlockProps = {
   onSelect: () => void;
   onSeek: () => void;
   children?: ReactNode;
+  minWidthPercent?: number;
 };
 
 function TimelineBlock({
@@ -121,7 +122,9 @@ function TimelineBlock({
   onSelect,
   onSeek,
   children,
+  minWidthPercent = 2,
 }: BlockProps) {
+  const widthPercent = msToPercent(endMs, durationMs) - msToPercent(startMs, durationMs);
   return (
     <button
       type="button"
@@ -135,10 +138,7 @@ function TimelineBlock({
       )}
       style={{
         left: `${msToPercent(startMs, durationMs)}%`,
-        width: `${Math.max(
-          2,
-          msToPercent(endMs, durationMs) - msToPercent(startMs, durationMs),
-        )}%`,
+        width: `${Math.max(minWidthPercent, widthPercent)}%`,
       }}
       onClick={(e) => {
         e.stopPropagation();
@@ -246,6 +246,7 @@ export function VideoTimelinePane({
               startMs={seg.startMs}
               endMs={seg.endMs}
               durationMs={effectiveDuration}
+              minWidthPercent={0.35}
               title={seg.text}
               label={`文字起こし: ${seg.text}`}
               className="bg-accent hover:bg-accent/80"

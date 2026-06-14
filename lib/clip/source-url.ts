@@ -69,7 +69,7 @@ export function isYoutubeUrl(url: string): boolean {
 
 export function describeSourceUrlSupport(url: string): string {
   if (isYoutubeUrl(url)) {
-    return "YouTube は字幕を先に取得し、テキスト要約のみ Gemini に渡します（動画丸ごと解析より高速）。";
+    return "YouTube は字幕を取得し、文字起こしと要約の両方に使います（動画丸ごと解析より高速）。";
   }
   return "YouTube 以外の URL は Gemini 側で取得できない場合があります。うまくいかない場合は YouTube のアーカイブ URL を試してください。";
 }

@@ -5,6 +5,7 @@ import {
   normalizeSourceUrl,
 } from "@/lib/clip/source-url";
 import {
+  captionsToTranscriptSegments,
   mergeCaptionLines,
   parseYoutubeCaptionJson3,
   parseYoutubeCaptionXml,
@@ -87,6 +88,25 @@ describe("caption parsing helpers", () => {
 
     expect(prepared.durationMs).toBe(65_000);
     expect(prepared.text).toContain("導入");
+  });
+
+  it("converts captions to sentence-based display segments", () => {
+    const segments = captionsToTranscriptSegments([
+      { startMs: 0, endMs: 6000, text: "あの、こんにちは。" },
+      { startMs: 60_000, endMs: 65_000, text: "続きです。" },
+    ]);
+
+    expect(segments).toHaveLength(2);
+    expect(segments[0]).toEqual({
+      startMs: 0,
+      endMs: 6000,
+      text: "こんにちは。",
+    });
+    expect(segments[1]).toEqual({
+      startMs: 60_000,
+      endMs: 65_000,
+      text: "続きです。",
+    });
   });
 
   it("splits captions into time chunks", () => {

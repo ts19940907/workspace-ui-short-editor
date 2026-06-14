@@ -1,5 +1,6 @@
 import { formatTimelineLabel } from "@/lib/clip/time";
 import { extractYoutubeVideoId } from "@/lib/clip/source-url";
+import { groupTimedLinesBySentence } from "@/lib/clip/transcript-display";
 
 const YOUTUBE_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -86,6 +87,13 @@ export function prepareCaptionSummaryInput(
     durationMs,
     text: formatCaptionLinesForSummary(merged),
   };
+}
+
+/** 字幕行を画面表示用セグメントに変換（ケバ除去 + 「。」区切り） */
+export function captionsToTranscriptSegments(
+  lines: YoutubeCaptionLine[],
+): Array<{ startMs: number; endMs: number; text: string }> {
+  return groupTimedLinesBySentence(lines);
 }
 
 /** 長尺字幕を時間区切りで分割（要約 API を小分けにする） */
@@ -205,9 +213,10 @@ function pickCaptionTrack(tracks: CaptionTrack[]): CaptionTrack | undefined {
   );
 }
 
-async function fetchInnertubeCaptionTracks(
-  videoId: string,
-): Promise<CaptionTrack[]> {
+async function fetchInnertubePlayer(videoId: string): Promise<{
+  tracks: CaptionTrack[];
+  durationMs: number;
+}> {
   const response = await fetch(
     "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
     {
@@ -236,6 +245,7 @@ async function fetchInnertubeCaptionTracks(
 
   const json = (await response.json()) as {
     playabilityStatus?: { status?: string; reason?: string };
+    videoDetails?: { lengthSeconds?: string | number };
     captions?: {
       playerCaptionsTracklistRenderer?: {
         captionTracks?: CaptionTrack[];
@@ -259,7 +269,13 @@ async function fetchInnertubeCaptionTracks(
     );
   }
 
-  return tracks;
+  const lengthSeconds = Number(json.videoDetails?.lengthSeconds ?? 0);
+  const durationMs =
+    Number.isFinite(lengthSeconds) && lengthSeconds > 0
+      ? Math.round(lengthSeconds * 1000)
+      : 0;
+
+  return { tracks, durationMs };
 }
 
 function extractCaptionTracksFromWatchPage(html: string): CaptionTrack[] {
@@ -325,17 +341,25 @@ async function fetchCaptionTrackLines(track: CaptionTrack): Promise<YoutubeCapti
   return xmlLines;
 }
 
+export type YoutubeCaptionFetchResult = {
+  lines: YoutubeCaptionLine[];
+  durationMs: number;
+};
+
 export async function fetchYoutubeCaptions(
   sourceUrl: string,
-): Promise<YoutubeCaptionLine[]> {
+): Promise<YoutubeCaptionFetchResult> {
   const videoId = extractYoutubeVideoId(sourceUrl);
   if (!videoId) {
     throw new Error("YouTube URL から動画 ID を取得できませんでした");
   }
 
   let tracks: CaptionTrack[];
+  let durationMs = 0;
   try {
-    tracks = await fetchInnertubeCaptionTracks(videoId);
+    const player = await fetchInnertubePlayer(videoId);
+    tracks = player.tracks;
+    durationMs = player.durationMs;
   } catch (innertubeError) {
     const pageResponse = await fetch(
       `https://www.youtube.com/watch?v=${videoId}`,
@@ -366,7 +390,13 @@ export async function fetchYoutubeCaptions(
     throw new Error("利用可能な YouTube 字幕トラックがありません");
   }
 
-  return fetchCaptionTrackLines(track);
+  const lines = await fetchCaptionTrackLines(track);
+  const captionEndMs = lines.reduce((max, line) => Math.max(max, line.endMs), 0);
+
+  return {
+    lines,
+    durationMs: durationMs || captionEndMs,
+  };
 }
 
 export { extractYoutubeVideoId };

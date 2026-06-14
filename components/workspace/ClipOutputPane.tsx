@@ -7,7 +7,8 @@ import {
   transcriptToProofreadText,
   type ClipOutputResponse,
 } from "@/lib/clip/output";
-import { downloadPremiereExport } from "@/lib/clip/srt";
+import { downloadPremiereExportWithSource } from "@/lib/clip/export-srt";
+import { countSrtCues } from "@/lib/clip/srt";
 import { describeSourceUrlSupport, isValidHttpUrl } from "@/lib/clip/source-url";
 import type { ClipProject, TranscriptSegment } from "@/lib/clip-schema";
 import { Button } from "@/components/ui/button";
@@ -57,7 +58,10 @@ export function ClipOutputPane({
   onApplyTranscript,
 }: ClipOutputPaneProps) {
   const [proofreadOpen, setProofreadOpen] = useState(false);
+  const [isExportRunning, setIsExportRunning] = useState(false);
+  const [exportMessage, setExportMessage] = useState<string | null>(null);
   const canExport = project.editableTitles.length > 0;
+  const transcriptCueCount = countSrtCues(project.segments);
   const isSaved = project.isSaved ?? false;
   const hasTranscript = project.segments.length > 0;
   const sourceUrl = project.sourceUrl?.trim() ?? "";
@@ -105,11 +109,11 @@ export function ClipOutputPane({
               onClick={onRunOutput}
             >
               <Sparkles data-icon="inline-start" />
-              {isOutputRunning ? "AI 処理中…" : "出力（要約）"}
+              {isOutputRunning ? "AI 処理中…" : "出力（文字起こし・要約）"}
             </Button>
             <p className="text-xs text-muted-foreground">
-              ライブ配信リンク（YouTube 等）からタイムテーブルごとの要約・タイトル案を生成します。YouTube
-              は字幕を取得して要約するため高速です（字幕が無い動画はエラーになります）。
+              ライブ配信リンク（YouTube 等）から文字起こし・要約・タイトル案を生成します。YouTube
+              は字幕取得＋テキスト要約のため高速です（字幕が無い動画はエラーになります）。
             </p>
             {hasSourceUrl ? (
               <p className="text-xs text-muted-foreground">
@@ -183,24 +187,42 @@ export function ClipOutputPane({
           <Card className="flex flex-col gap-3 rounded-lg border-border bg-card p-3">
             <h3 className="text-sm font-semibold">Premiere Pro 出力</h3>
             <p className="text-xs text-muted-foreground">
-              summary.srt（編集可能タイトル）をダウンロードします。文字起こしがある場合は
-              transcript.srt も含まれます。
+              文字起こし {transcriptCueCount} 件・要約 {project.editableTitles.length}{" "}
+              件を別ファイルで書き出します。YouTube リンクがある場合、文字起こしは字幕の全行を使います（タイムライン表示より細かい件数になります）。
             </p>
             <Button
               type="button"
               size="sm"
-              disabled={!canExport}
-              onClick={() =>
-                downloadPremiereExport(
-                  project.title,
-                  project.segments,
-                  project.editableTitles,
-                )
-              }
+              disabled={!canExport || isExportRunning}
+              onClick={() => {
+                setIsExportRunning(true);
+                setExportMessage(null);
+                void downloadPremiereExportWithSource({
+                  projectTitle: project.title,
+                  sourceUrl: project.sourceUrl,
+                  segments: project.segments,
+                  editableTitles: project.editableTitles,
+                  readOnlyTitles: project.readOnlyTitles,
+                })
+                  .then(({ transcriptCueCount: exportedTranscript, summaryCueCount }) => {
+                    setExportMessage(
+                      `書き出し完了: 文字起こし ${exportedTranscript} キュー / 要約 ${summaryCueCount} キュー`,
+                    );
+                  })
+                  .catch((error) => {
+                    setExportMessage((error as Error).message);
+                  })
+                  .finally(() => {
+                    setIsExportRunning(false);
+                  });
+              }}
             >
               <FileDown data-icon="inline-start" />
-              SRT を書き出し
+              {isExportRunning ? "SRT 生成中…" : "SRT を書き出し"}
             </Button>
+            {exportMessage ? (
+              <p className="text-xs text-muted-foreground">{exportMessage}</p>
+            ) : null}
           </Card>
 
           <Card className="flex flex-col gap-3 rounded-lg border-border bg-card p-3">

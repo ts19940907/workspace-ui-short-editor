@@ -1,6 +1,6 @@
 import { get } from "@vercel/blob";
 
-import { isVercelBlobUrl } from "@/lib/cloud/blob-video";
+import { isVercelBlobUrl, resolveBlobVideoResponseStatus } from "@/lib/cloud/blob-video";
 import { isBlobStorageEnabled, isCloudEnabled } from "@/lib/cloud/config";
 
 export async function GET(request: Request): Promise<Response> {
@@ -35,8 +35,14 @@ export async function GET(request: Request): Promise<Response> {
     headers.set("Accept-Ranges", "bytes");
   }
 
+  const status = resolveBlobVideoResponseStatus(
+    range,
+    headers.get("Content-Range"),
+    result.statusCode,
+  );
+
   return new Response(result.stream, {
-    status: result.statusCode,
+    status,
     headers,
   });
 }

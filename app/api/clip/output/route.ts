@@ -29,7 +29,7 @@ export async function POST(request: Request): Promise<Response> {
       const outputModeParsed = clipOutputModeSchema.safeParse(outputModeRaw);
       const outputMode = outputModeParsed.success
         ? outputModeParsed.data
-        : "summaryOnly";
+        : "full";
 
       const sourceUrl =
         typeof sourceUrlRaw === "string" && isValidHttpUrl(sourceUrlRaw)

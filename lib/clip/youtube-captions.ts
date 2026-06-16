@@ -206,9 +206,9 @@ function pickCaptionTrack(tracks: CaptionTrack[]): CaptionTrack | undefined {
     prefer((track) => track.languageCode === "ja" && track.kind !== "asr") ??
     prefer(
       (track) =>
-        track.languageCode?.startsWith("ja") && track.kind === "asr",
+        (track.languageCode?.startsWith("ja") ?? false) && track.kind === "asr",
     ) ??
-    prefer((track) => track.languageCode?.startsWith("ja")) ??
+    prefer((track) => track.languageCode?.startsWith("ja") ?? false) ??
     tracks[0]
   );
 }

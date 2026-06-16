@@ -3,6 +3,15 @@ import { get } from "@vercel/blob";
 import { isVercelBlobUrl, resolveBlobVideoResponseStatus } from "@/lib/cloud/blob-video";
 import { isBlobStorageEnabled, isCloudEnabled } from "@/lib/cloud/config";
 
+/** @vercel/blob の undici Headers を Web API Headers に変換 */
+function toWebHeaders(source: { entries(): IterableIterator<[string, string]> }): Headers {
+  const headers = new Headers();
+  for (const [key, value] of source.entries()) {
+    headers.set(key, value);
+  }
+  return headers;
+}
+
 export async function GET(request: Request): Promise<Response> {
   if (!isCloudEnabled() || !isBlobStorageEnabled()) {
     return new Response("Blob storage is not configured", { status: 503 });
@@ -26,11 +35,11 @@ export async function GET(request: Request): Promise<Response> {
     return new Response("Blob not found", { status: 404 });
   }
 
-  if (result.statusCode === 304) {
-    return new Response(null, { status: 304, headers: result.headers });
-  }
+  const headers = toWebHeaders(result.headers);
 
-  const headers = new Headers(result.headers);
+  if (result.statusCode === 304) {
+    return new Response(null, { status: 304, headers });
+  }
   if (!headers.has("Accept-Ranges")) {
     headers.set("Accept-Ranges", "bytes");
   }

@@ -68,6 +68,19 @@ export type ClipOutputData = Pick<
   "segments" | "readOnlyTitles" | "editableTitles" | "durationMs"
 > & { mode: ClipOutputResponse["mode"] };
 
+function toClipOutputData(
+  parsed: ClipOutputResponse,
+  fallbackDurationMs: number,
+): ClipOutputData {
+  return {
+    segments: parsed.segments,
+    readOnlyTitles: parsed.readOnlyTitles,
+    editableTitles: parsed.editableTitles,
+    durationMs: parsed.durationMs ?? fallbackDurationMs,
+    mode: parsed.mode,
+  };
+}
+
 async function parseErrorMessage(response: Response): Promise<string> {
   const text = await response.text();
   return text || "AI 出力に失敗しました";
@@ -113,7 +126,10 @@ export async function requestClipOutput(
     if (!response.ok) {
       throw new Error(await parseErrorMessage(response));
     }
-    return clipOutputResponseSchema.parse(await response.json());
+    return toClipOutputData(
+      clipOutputResponseSchema.parse(await response.json()),
+      durationMs,
+    );
   }
 
   const response = await fetch("/api/clip/output", {
@@ -132,7 +148,10 @@ export async function requestClipOutput(
     throw new Error(await parseErrorMessage(response));
   }
 
-  return clipOutputResponseSchema.parse(await response.json());
+  return toClipOutputData(
+    clipOutputResponseSchema.parse(await response.json()),
+    durationMs,
+  );
 }
 
 /** プロジェクトの文字起こし全文を校正用テキストに整形 */

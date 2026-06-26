@@ -153,7 +153,7 @@ export function ClipOutputPane({
             {isSaved && onDelete ? (
               <Button
                 type="button"
-                variant="outline"
+                variant="destructive-solid"
                 size="sm"
                 disabled={isSaving || isDeleting}
                 onClick={onDelete}

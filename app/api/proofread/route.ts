@@ -5,7 +5,7 @@ import {
 } from "@/lib/clip/proofread";
 import { geminiGenerateContent, formatGeminiError, hasGeminiKey } from "@/lib/clip/gemini";
 
-const SYSTEM_PROMPT = `あなたは日本語の校正者です。ユーザーから渡されたテキストについて、誤字脱字・文法・表記ゆれ・読みやすさの観点で修正提案を行ってください。
+const SYSTEM_PROMPT = `あなたは日本語の校正者です。ユーザーから渡されたテキストについて、日本語として成立していないような内容はもちろん、誤字脱字がないかチェックしてください。
 
 出力形式:
 - 問題がない場合は「問題は見つかりませんでした」と簡潔に述べる

@@ -2,11 +2,7 @@ import { normalizeTranscriptSegments } from "@/lib/clip/ai-output";
 import { buildPremiereExportFiles } from "@/lib/clip/srt";
 import { isValidHttpUrl, isYoutubeUrl } from "@/lib/clip/source-url";
 import { fetchYoutubeCaptions } from "@/lib/clip/youtube-captions";
-import type {
-  EditableTitleSegment,
-  ReadOnlyTitleSegment,
-  TranscriptSegment,
-} from "@/lib/clip-schema";
+import type { EditableTitleSegment, TranscriptSegment } from "@/lib/clip-schema";
 import { z } from "zod";
 
 export const runtime = "nodejs";
@@ -31,14 +27,6 @@ const exportRequestSchema = z.object({
       sourceSegmentIds: z.array(z.string()),
     }),
   ),
-  readOnlyTitles: z.array(
-    z.object({
-      id: z.string(),
-      startMs: z.number().int().nonnegative(),
-      endMs: z.number().int().nonnegative(),
-      text: z.string(),
-    }),
-  ).default([]),
 });
 
 export async function POST(request: Request): Promise<Response> {
@@ -71,7 +59,6 @@ export async function POST(request: Request): Promise<Response> {
   const files = buildPremiereExportFiles(
     segments,
     parsed.data.editableTitles as EditableTitleSegment[],
-    parsed.data.readOnlyTitles as ReadOnlyTitleSegment[],
   );
 
   return Response.json(files);

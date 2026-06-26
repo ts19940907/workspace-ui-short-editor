@@ -1,5 +1,5 @@
 import { formatSrtTime } from "@/lib/clip/time";
-import type { EditableTitleSegment, ReadOnlyTitleSegment, TranscriptSegment } from "@/lib/clip-schema";
+import type { EditableTitleSegment, TranscriptSegment } from "@/lib/clip-schema";
 
 type TimedText = { startMs: number; endMs: number; text: string };
 
@@ -63,43 +63,25 @@ export function downloadTextFile(filename: string, content: string, mime = "text
   URL.revokeObjectURL(url);
 }
 
-const PREMIERE_README = `Premiere Pro への読み込み手順
-========================
-
-1. YouTube からダウンロードした「同じ動画」をシーケンス V1 の 00:00:00:00 から配置する
-2. *_transcript.srt … 文字起こし（字幕1行 = 1キュー）
-3. *_summary.srt … 編集可能タイトル（話題数と同じキュー数）
-4. *_titles_readonly.srt … 編集不可タイトル（参照用）
-
-※ transcript.srt は summary.srt より細かいタイムコードです（件数が多いのが正常です）。
-※ 動画 IN 点を 00:00:00:00 に合わせてください。
-`;
-
 export type PremiereExportFiles = {
   transcriptSrt: string;
   transcriptCueCount: number;
-  summarySrt: string;
-  summaryCueCount: number;
-  readOnlySrt: string;
-  readOnlyCueCount: number;
+  editableTitlesSrt: string;
+  editableTitlesCueCount: number;
 };
 
 export function buildPremiereExportFiles(
   segments: TranscriptSegment[],
   editableTitles: EditableTitleSegment[],
-  readOnlyTitles: ReadOnlyTitleSegment[] = [],
 ): PremiereExportFiles {
   const transcriptSrt = transcriptToSrt(segments);
-  const summarySrt = editableTitlesToSrt(editableTitles);
-  const readOnlySrt = readOnlyTitles.length > 0 ? segmentsToSrt(readOnlyTitles) : "";
+  const editableTitlesSrt = editableTitlesToSrt(editableTitles);
 
   return {
     transcriptSrt,
     transcriptCueCount: countSrtCues(segments),
-    summarySrt,
-    summaryCueCount: countSrtCues(editableTitles),
-    readOnlySrt,
-    readOnlyCueCount: readOnlyTitles.length > 0 ? countSrtCues(readOnlyTitles) : 0,
+    editableTitlesSrt,
+    editableTitlesCueCount: countSrtCues(editableTitles),
   };
 }
 
@@ -107,9 +89,8 @@ export function downloadPremiereExport(
   projectTitle: string,
   segments: TranscriptSegment[],
   editableTitles: EditableTitleSegment[],
-  readOnlyTitles: ReadOnlyTitleSegment[] = [],
-): { transcriptCueCount: number; summaryCueCount: number } {
-  const files = buildPremiereExportFiles(segments, editableTitles, readOnlyTitles);
+): { transcriptCueCount: number; editableTitlesCueCount: number } {
+  const files = buildPremiereExportFiles(segments, editableTitles);
   const safeBase =
     projectTitle.replace(/[^\w\u3040-\u30ff\u4e00-\u9fff-]+/gu, "_") || "project";
 
@@ -121,21 +102,13 @@ export function downloadPremiereExport(
     );
   }
   downloadTextFile(
-    `${safeBase}_summary_${files.summaryCueCount}cue.srt`,
-    files.summarySrt,
+    `${safeBase}_editable_titles_${files.editableTitlesCueCount}cue.srt`,
+    files.editableTitlesSrt,
     "application/x-subrip",
   );
-  if (files.readOnlyCueCount > 0) {
-    downloadTextFile(
-      `${safeBase}_titles_readonly_${files.readOnlyCueCount}cue.srt`,
-      files.readOnlySrt,
-      "application/x-subrip",
-    );
-  }
-  downloadTextFile(`${safeBase}_premiere_README.txt`, PREMIERE_README);
 
   return {
     transcriptCueCount: files.transcriptCueCount,
-    summaryCueCount: files.summaryCueCount,
+    editableTitlesCueCount: files.editableTitlesCueCount,
   };
 }

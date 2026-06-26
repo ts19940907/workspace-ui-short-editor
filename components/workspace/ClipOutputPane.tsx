@@ -187,8 +187,9 @@ export function ClipOutputPane({
           <Card className="flex flex-col gap-3 rounded-lg border-border bg-card p-3">
             <h3 className="text-sm font-semibold">Premiere Pro 出力</h3>
             <p className="text-xs text-muted-foreground">
-              文字起こし {transcriptCueCount} 件・要約 {project.editableTitles.length}{" "}
-              件を別ファイルで書き出します。YouTube リンクがある場合、文字起こしは字幕の全行を使います（タイムライン表示より細かい件数になります）。
+              文字起こし {transcriptCueCount} 件・編集可能タイトル{" "}
+              {project.editableTitles.length} 件を別ファイルで書き出します。YouTube
+              リンクがある場合、文字起こしは字幕の全行を使います（タイムライン表示より細かい件数になります）。
             </p>
             <Button
               type="button"
@@ -202,13 +203,17 @@ export function ClipOutputPane({
                   sourceUrl: project.sourceUrl,
                   segments: project.segments,
                   editableTitles: project.editableTitles,
-                  readOnlyTitles: project.readOnlyTitles,
                 })
-                  .then(({ transcriptCueCount: exportedTranscript, summaryCueCount }) => {
-                    setExportMessage(
-                      `書き出し完了: 文字起こし ${exportedTranscript} キュー / 要約 ${summaryCueCount} キュー`,
-                    );
-                  })
+                  .then(
+                    ({
+                      transcriptCueCount: exportedTranscript,
+                      editableTitlesCueCount,
+                    }) => {
+                      setExportMessage(
+                        `書き出し完了: 文字起こし ${exportedTranscript} キュー / 編集可能タイトル ${editableTitlesCueCount} キュー`,
+                      );
+                    },
+                  )
                   .catch((error) => {
                     setExportMessage((error as Error).message);
                   })

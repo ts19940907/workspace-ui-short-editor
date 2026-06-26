@@ -1,3 +1,4 @@
+import { connection } from "next/server";
 import { ClipWorkspace } from "@/components/workspace/ClipWorkspace";
 import projectsData from "@/data/clip-projects.json";
 import workspaceData from "@/data/workspace-clip.json";
@@ -13,6 +14,9 @@ const workspaceClipSchema = z.object({
 });
 
 export default async function Page() {
+  // ビルド時の DB スナップショットを避け、常に Neon から最新一覧を読む
+  await connection();
+
   const wsResult = workspaceClipSchema.safeParse(workspaceData);
   if (!wsResult.success) {
     throw new Error(

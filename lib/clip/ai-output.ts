@@ -65,7 +65,19 @@ const liveStreamSummarySchema = z.object({
 
 export type ClipOutputMode = "full" | "summaryOnly";
 
-const LIVE_STREAM_SUMMARY_SYSTEM_PROMPT = `あなたはライブ配信の切り抜き編集アシスタントです。指定された動画の内容を視聴し、タイムテーブル（話題区切り）ごとの要約のみを作成してください。文字起こしは不要です。
+/** 画面のライブ配信リンク欄の値をプロンプトに埋め込む */
+export function buildSummaryRequestPrompt(sourceUrl?: string): string {
+  const trimmed = sourceUrl?.trim();
+  const link = trimmed
+    ? isValidHttpUrl(trimmed)
+      ? normalizeSourceUrl(trimmed)
+      : trimmed
+    : "（ライブ配信リンク未入力）";
+  return `${link} 記載しているURLの配信のトピックが変わるたびにHH:mm:ss形式のタイムテーブルと話している内容を記載してください。`;
+}
+
+function buildLiveStreamSummarySystemPrompt(sourceUrl: string): string {
+  return `${buildSummaryRequestPrompt(sourceUrl)}
 
 JSON 形式で出力:
 {
@@ -83,14 +95,17 @@ JSON 形式で出力:
 
 ルール:
 - 日本語で出力
-- topics はタイムテーブル（話題区切り）ごとの要約。3〜8 セクション程度
+- topics の startMs/endMs は HH:mm:ss に対応するミリ秒整数（タイムテーブルの各区間）
 - topicLabel は短い見出し（編集不可タイトル層用）
-- summaryText は 1 行の要約（編集可能タイトル層用）
-- startMs/endMs はミリ秒整数
+- summaryText はその区間で話している内容（編集可能タイトル層用）
 - durationMs は動画全体の長さ（ミリ秒）
 - sourceSegmentIds は空配列 [] でよい（文字起こしなし）`;
+}
 
-const CAPTION_SUMMARY_SYSTEM_PROMPT = `あなたはライブ配信の切り抜き編集アシスタントです。YouTube 字幕テキスト（タイムスタンプ付き）を読み、タイムテーブル（話題区切り）ごとの要約 topics を作成してください。
+function buildCaptionSummarySystemPrompt(sourceUrl: string): string {
+  return `${buildSummaryRequestPrompt(sourceUrl)}
+
+YouTube 字幕テキスト（タイムスタンプ付き）を読み、上記タイムテーブルに沿って topics を JSON で出力してください。
 
 JSON 形式で出力:
 {
@@ -109,13 +124,16 @@ JSON 形式で出力:
 ルール:
 - 日本語で出力
 - 入力の [M:SS-M:SS] タイムスタンプを参照し、topics の startMs/endMs をミリ秒整数で正確に設定する
-- topics は 3〜8 セクション程度（長尺配信は 6〜10 も可）
-+- 各区間は重ならない。1 チャンクあたり最大 3 セクション
-- topicLabel は短い見出し、summaryText は 1 行要約
+- 各区間は重ならない。1 チャンクあたり最大 3 セクション
+- topicLabel は短い見出し、summaryText はその区間で話している内容
 - durationMs は最後の topic の endMs または入力末尾の時刻から推定
 - sourceSegmentIds は空配列 [] でよい`;
+}
 
-const LOCAL_VIDEO_SUMMARY_SYSTEM_PROMPT = `あなたはライブ配信の切り抜き編集アシスタントです。動画の内容を視聴し、タイムテーブル（話題区切り）ごとの要約のみを作成してください。文字起こしは不要です。
+function buildLocalVideoSummarySystemPrompt(sourceUrl?: string): string {
+  return `${buildSummaryRequestPrompt(sourceUrl)}
+
+動画の内容を視聴し、上記タイムテーブルに沿って topics を JSON で出力してください。
 
 JSON 形式で出力:
 {
@@ -133,9 +151,36 @@ JSON 形式で出力:
 
 ルール:
 - 日本語で出力
-- topics は 3〜6 セクション程度（短い動画は 2〜3）
-- topicLabel / summaryText / startMs / endMs の意味はライブ配信用プロンプトと同じ
+- topics の startMs/endMs は HH:mm:ss に対応するミリ秒整数
+- topicLabel は短い見出し、summaryText はその区間で話している内容
 - sourceSegmentIds は空配列 [] でよい`;
+}
+
+function buildTitleSystemPrompt(sourceUrl?: string): string {
+  return `${buildSummaryRequestPrompt(sourceUrl)}
+
+文字起こしセグメントを読み、上記タイムテーブルに沿って topics を JSON で出力してください。
+
+JSON 形式で出力:
+{
+  "topics": [
+    {
+      "startMs": number,
+      "endMs": number,
+      "topicLabel": string,
+      "summaryText": string,
+      "sourceSegmentIds": string[]
+    }
+  ]
+}
+
+ルール:
+- topicLabel は短い見出し（編集不可タイトル層用）
+- summaryText はその区間で話している内容（編集可能タイトル層用）
+- startMs/endMs はセグメントの startMs/endMs から決める（HH:mm:ss に対応するミリ秒整数）
+- sourceSegmentIds は該当する文字起こしセグメント id を列挙
+- 日本語で出力`;
+}
 
 const LIVE_STREAM_SYSTEM_PROMPT = `あなたはライブ配信の切り抜き編集アシスタントです。指定された動画の内容を視聴し、タイムテーブル（話題区切り）ごとに文字起こしと要約を作成してください。
 
@@ -185,29 +230,6 @@ JSON 形式で出力:
 - 最初のセグメントは startMs: 0 から始める
 - フィラー（えー、あの、えっと等）は書かない
 - 1 セグメント = 1 文（「。」で終わる単位）`;
-
-const TITLE_SYSTEM_PROMPT = `あなたはライブ配信の切り抜き編集者です。文字起こしセグメントを話題ごとにグループ化し、Premiere 用のタイトルテロップ案を作成してください。
-
-JSON 形式で出力:
-{
-  "topics": [
-    {
-      "startMs": number,
-      "endMs": number,
-      "topicLabel": string,
-      "summaryText": string,
-      "sourceSegmentIds": string[]
-    }
-  ]
-}
-
-ルール:
-- topicLabel は短い見出し（編集不可タイトル層用）
-- summaryText は 1 行の要約（編集可能タイトル層用）
-- startMs/endMs はセグメントの startMs/endMs から決める
-- sourceSegmentIds は該当する文字起こしセグメント id を列挙
-- 動画全体を 3〜6 話題に分割（短い動画は 2〜3）
-- 日本語で出力`;
 
 export type AiClipOutput = Pick<
   import("@/lib/clip-schema").ClipProject,
@@ -416,13 +438,13 @@ async function summarizeCaptionChunk(
 ): Promise<z.infer<typeof aiTopicSchema>[]> {
   const { text } = prepareCaptionSummaryInput(chunkLines);
   const content = await geminiGenerateContent({
-    system: CAPTION_SUMMARY_SYSTEM_PROMPT,
+    system: buildCaptionSummarySystemPrompt(sourceUrl),
     user: [
+      buildSummaryRequestPrompt(sourceUrl),
+      "",
       "以下は YouTube 動画の字幕の一部です。",
       `対象区間: ${rangeLabel}`,
-      "この区間内の話題区切り topics のみを JSON で返してください（startMs/endMs は動画全体の絶対時刻）。",
-      "",
-      `動画 URL: ${normalizeSourceUrl(sourceUrl)}`,
+      "topics の startMs/endMs は動画全体の絶対時刻（ミリ秒）で返してください。",
       "",
       text,
     ].join("\n"),
@@ -491,6 +513,7 @@ async function processYoutubeFromCaptions(
   const titled = await generateTitlesFromTranscript(
     compressSegmentsForTitleGeneration(segments),
     durationMs,
+    sourceUrl,
   );
   const topics = assignTopicTimeRangesFromSegments(
     titled.editableTitles.map((item) => ({
@@ -526,13 +549,8 @@ async function analyzeLiveStreamUrl(
 
   if (outputMode === "summaryOnly") {
     const content = await geminiGenerateContentWithRemoteUrl({
-      system: LIVE_STREAM_SUMMARY_SYSTEM_PROMPT,
-      user: [
-        "次のライブ配信（動画）URL を視聴してください。",
-        "タイムテーブル（話題区切り）ごとの要約 topics のみを JSON で返してください。文字起こしは不要です。",
-        "",
-        `URL: ${normalizedUrl}`,
-      ].join("\n"),
+      system: buildLiveStreamSummarySystemPrompt(normalizedUrl),
+      user: buildSummaryRequestPrompt(normalizedUrl),
       sourceUrl: normalizedUrl,
       temperature: 0.2,
       jsonObject: true,
@@ -613,6 +631,7 @@ async function transcribeLocalVideoWithGemini(
 async function generateTitlesFromTranscript(
   segments: TranscriptSegment[],
   durationMs: number,
+  sourceUrl?: string,
 ): Promise<Pick<AiClipOutput, "readOnlyTitles" | "editableTitles">> {
   const payload = {
     durationMs,
@@ -625,8 +644,8 @@ async function generateTitlesFromTranscript(
   };
 
   const content = await geminiGenerateContent({
-    system: TITLE_SYSTEM_PROMPT,
-    user: `以下の文字起こしをもとに topics を生成してください:\n\n${JSON.stringify(payload, null, 2)}`,
+    system: buildTitleSystemPrompt(sourceUrl),
+    user: `${buildSummaryRequestPrompt(sourceUrl)}\n\n以下の文字起こしをもとに topics を JSON で返してください:\n\n${JSON.stringify(payload, null, 2)}`,
     temperature: 0.3,
     jsonObject: true,
   });
@@ -643,10 +662,11 @@ async function summarizeLocalVideoWithGemini(
   videoBlob: Blob,
   fileName: string,
   durationMs: number,
+  sourceUrl?: string,
 ): Promise<Pick<AiClipOutput, "readOnlyTitles" | "editableTitles" | "durationMs">> {
   const content = await geminiGenerateContentWithMedia({
-    system: LOCAL_VIDEO_SUMMARY_SYSTEM_PROMPT,
-    user: `この動画（約 ${Math.round(durationMs / 1000)} 秒）を視聴し、タイムテーブル（話題区切り）ごとの要約 topics のみを JSON で返してください。`,
+    system: buildLocalVideoSummarySystemPrompt(sourceUrl),
+    user: `${buildSummaryRequestPrompt(sourceUrl)}\n\nこの動画（約 ${Math.round(durationMs / 1000)} 秒）を視聴し、topics を JSON で返してください。`,
     mediaBlob: videoBlob,
     mediaFileName: fileName,
     mimeType: guessVideoMimeType(fileName),
@@ -669,13 +689,15 @@ async function summarizeLocalVideoWithGemini(
 async function analyzeLocalVideo(
   options: {
     durationMs: number;
+    sourceUrl?: string;
     videoUrl?: string;
     videoFileName?: string;
     videoBlob?: Blob;
     outputMode: ClipOutputMode;
   },
 ): Promise<AiClipOutput> {
-  const { durationMs, videoUrl, videoFileName, videoBlob, outputMode } = options;
+  const { durationMs, sourceUrl, videoUrl, videoFileName, videoBlob, outputMode } =
+    options;
 
   let blob = videoBlob;
   let name = videoFileName ?? "video.mp4";
@@ -692,7 +714,12 @@ async function analyzeLocalVideo(
   }
 
   if (outputMode === "summaryOnly") {
-    const summarized = await summarizeLocalVideoWithGemini(blob, name, durationMs);
+    const summarized = await summarizeLocalVideoWithGemini(
+      blob,
+      name,
+      durationMs,
+      sourceUrl,
+    );
     return {
       segments: [],
       readOnlyTitles: summarized.readOnlyTitles,
@@ -703,7 +730,7 @@ async function analyzeLocalVideo(
   }
 
   const segments = await transcribeLocalVideoWithGemini(blob, name, durationMs);
-  const titled = await generateTitlesFromTranscript(segments, durationMs);
+  const titled = await generateTitlesFromTranscript(segments, durationMs, sourceUrl);
 
   return {
     segments,
@@ -755,6 +782,7 @@ export async function runAiClipOutput(options: {
 
   return analyzeLocalVideo({
     durationMs: durationMs > 0 ? durationMs : 420_000,
+    sourceUrl: sourceUrl?.trim() || undefined,
     videoUrl,
     videoFileName,
     videoBlob,

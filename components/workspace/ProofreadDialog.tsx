@@ -200,18 +200,6 @@ export function ProofreadDialog({
             />
           </div>
 
-          {text ? (
-            <div className="flex flex-col gap-2">
-              <Label>読み込んだ内容（先頭 500 文字）</Label>
-              <ScrollArea className="max-h-32 rounded-lg border border-border bg-card p-3">
-                <p className="whitespace-pre-wrap text-sm text-foreground">
-                  {text.slice(0, 500)}
-                  {text.length > 500 ? "…" : ""}
-                </p>
-              </ScrollArea>
-            </div>
-          ) : null}
-
           {error ? (
             <p className="text-sm text-destructive">{error}</p>
           ) : null}

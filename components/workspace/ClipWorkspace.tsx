@@ -13,6 +13,7 @@ import { requestClipOutput } from "@/lib/clip/output";
 import {
   createEmptyProject,
   getSelectedSegmentInfo,
+  isNeonPersistedProjectId,
   normalizeClipProject,
   updateSelectedSegmentText,
 } from "@/lib/clip/selection";
@@ -98,6 +99,7 @@ export function ClipWorkspace({
   );
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [uploadStatus, setUploadStatus] = useState<
     "idle" | "uploading" | "error"
   >("idle");
@@ -107,9 +109,16 @@ export function ClipWorkspace({
   useEffect(() => {
     if (selectedProjectId !== "") return;
     const storedId = sessionStorage.getItem(SELECTED_PROJECT_STORAGE_KEY);
-    if (storedId && savedProjects.some((p) => p.id === storedId)) {
+    if (
+      storedId &&
+      !storedId.startsWith("proj-") &&
+      savedProjects.some((p) => p.id === storedId)
+    ) {
       setSelectedProjectId(storedId);
       return;
+    }
+    if (storedId?.startsWith("proj-")) {
+      sessionStorage.removeItem(SELECTED_PROJECT_STORAGE_KEY);
     }
     if (savedProjects.length > 0) {
       setSelectedProjectId(savedProjects[0].id);
@@ -120,12 +129,6 @@ export function ClipWorkspace({
     if (draftProject?.id === selectedProjectId) return draftProject;
     return savedProjects.find((p) => p.id === selectedProjectId) ?? null;
   }, [draftProject, savedProjects, selectedProjectId]);
-
-  const isProjectSavedInCloud = useCallback(
-    (projectId: string) =>
-      savedProjects.some((p) => p.id === projectId && p.isSaved),
-    [savedProjects],
-  );
 
   const rawVideoUrl = activeProject
     ? (videoBlobUrls[activeProject.id] ?? activeProject.videoBlobUrl)
@@ -168,64 +171,88 @@ export function ClipWorkspace({
     [draftProject],
   );
 
-  const persistProjectAfterVideoUpload = useCallback(
-    async (
-      project: ClipProject,
-      previousProjectId: string,
-    ): Promise<ClipProject | null> => {
-      if (!cloudEnabled) return project;
+  const commitProject = useCallback(
+    async (project: ClipProject): Promise<ClipProject | null> => {
+      setIsSaving(true);
+      setSaveStatus("saving");
+      setSaveError(null);
+
+      const title =
+        project.title ||
+        project.sourceUrl?.replace(/^https?:\/\//, "").slice(0, 40) ||
+        `プロジェクト ${savedProjects.length + 1}`;
+
+      const previousProjectId = project.id;
+      const persistableVideoUrl = resolvePersistableVideoUrl(
+        project,
+        videoBlobUrls,
+      );
+      const shouldPersistVideoMeta =
+        Boolean(persistableVideoUrl) || !blobUploadEnabled;
+      let toSave: ClipProject = {
+        ...project,
+        title,
+        isSaved: true,
+        videoBlobUrl: persistableVideoUrl,
+        videoFileName: shouldPersistVideoMeta
+          ? project.videoFileName
+          : undefined,
+      };
+
       try {
-        let toPersist: ClipProject = {
-          ...project,
-          isSaved: true,
-          videoBlobUrl: resolvePersistableVideoUrl(project, videoBlobUrls),
-        };
-
-        if (!isProjectSavedInCloud(toPersist.id)) {
-          const created = await createProjectAction(
-            toPersist.title || "新規プロジェクト",
-          );
-          setVideoBlobUrls((prev) =>
-            migrateVideoBlobUrlKey(prev, previousProjectId, created.id),
-          );
-          toPersist = { ...toPersist, id: created.id };
-
-          const wasDraft = draftProject?.id === previousProjectId;
-          if (wasDraft) {
-            setSelectedProjectId(created.id);
-            setDraftProject(null);
-          }
-          setSavedProjects((prev) => {
-            const without = prev.filter(
-              (p) => p.id !== previousProjectId && p.id !== created.id,
+        if (cloudEnabled) {
+          const existsInCloud =
+            isNeonPersistedProjectId(toSave.id) &&
+            savedProjects.some((p) => p.id === toSave.id && p.isSaved);
+          if (existsInCloud) {
+            toSave = await saveProjectAction(toSave);
+          } else {
+            const created = await createProjectAction(toSave.title);
+            setVideoBlobUrls((prev) =>
+              migrateVideoBlobUrlKey(prev, previousProjectId, created.id),
             );
-            return [toPersist, ...without];
-          });
+            toSave = {
+              ...toSave,
+              id: created.id,
+            };
+            toSave = await saveProjectAction(toSave);
+            if (draftProject?.id === previousProjectId) {
+              setSelectedProjectId(created.id);
+              sessionStorage.setItem(SELECTED_PROJECT_STORAGE_KEY, created.id);
+            }
+          }
         }
 
-        const persisted = await saveProjectAction(toPersist);
-        replaceActiveProject(persisted);
+        setSavedProjects((prev) => {
+          const without = prev.filter((p) => p.id !== toSave.id);
+          const existing = prev.find((p) => p.id === toSave.id);
+          if (existing) {
+            return prev.map((p) => (p.id === toSave.id ? toSave : p));
+          }
+          return [toSave, ...without.filter((p) => p.id !== previousProjectId)];
+        });
+
+        if (draftProject?.id === previousProjectId) {
+          setDraftProject(null);
+        }
+
         setSaveStatus("saved");
-        return persisted;
-      } catch {
+        return toSave;
+      } catch (error) {
+        setSaveError((error as Error).message);
         setSaveStatus("error");
         return null;
+      } finally {
+        setIsSaving(false);
       }
     },
-    [
-      cloudEnabled,
-      draftProject,
-      isProjectSavedInCloud,
-      replaceActiveProject,
-      videoBlobUrls,
-    ],
+    [blobUploadEnabled, cloudEnabled, draftProject, savedProjects, videoBlobUrls],
   );
 
   const handleCreateProject = useCallback(() => {
     const next = createEmptyProject(savedProjects.length + 1);
     setDraftProject(next);
     setSelectedProjectId(next.id);
-    sessionStorage.setItem(SELECTED_PROJECT_STORAGE_KEY, next.id);
     setTimelineSelection(null);
     setIsPlaying(false);
   }, [savedProjects.length]);
@@ -300,7 +327,7 @@ export function ClipWorkspace({
           );
         }
 
-        await persistProjectAfterVideoUpload(updatedProject, projectId);
+        await commitProject(updatedProject);
 
         setUploadStatus("idle");
       } catch {
@@ -311,89 +338,15 @@ export function ClipWorkspace({
       blobUploadEnabled,
       cloudEnabled,
       draftProject,
-      persistProjectAfterVideoUpload,
+      commitProject,
       savedProjects,
     ],
   );
 
   const handleSave = useCallback(async () => {
     if (!activeProject) return;
-    setIsSaving(true);
-    setSaveStatus("saving");
-
-    const title =
-      activeProject.title ||
-      activeProject.sourceUrl?.replace(/^https?:\/\//, "").slice(0, 40) ||
-      `プロジェクト ${savedProjects.length + 1}`;
-
-    const previousProjectId = activeProject.id;
-    const persistableVideoUrl = resolvePersistableVideoUrl(
-      activeProject,
-      videoBlobUrls,
-    );
-    // Blob 有効時は URL が取れない動画メタデータを DB に書かない（ファイル名だけ残る事故を防ぐ）
-    const shouldPersistVideoMeta =
-      Boolean(persistableVideoUrl) || !blobUploadEnabled;
-    let toSave: ClipProject = {
-      ...activeProject,
-      title,
-      isSaved: true,
-      videoBlobUrl: persistableVideoUrl,
-      videoFileName: shouldPersistVideoMeta
-        ? activeProject.videoFileName
-        : undefined,
-    };
-
-    try {
-      if (cloudEnabled) {
-        const existsInCloud = savedProjects.some(
-          (p) => p.id === toSave.id && p.isSaved,
-        );
-        if (existsInCloud) {
-          toSave = await saveProjectAction(toSave);
-        } else {
-          const created = await createProjectAction(toSave.title);
-          setVideoBlobUrls((prev) =>
-            migrateVideoBlobUrlKey(prev, previousProjectId, created.id),
-          );
-          toSave = {
-            ...toSave,
-            id: created.id,
-          };
-          toSave = await saveProjectAction(toSave);
-          if (draftProject?.id === activeProject.id) {
-            setSelectedProjectId(created.id);
-          }
-        }
-      }
-
-      setSavedProjects((prev) => {
-        const without = prev.filter((p) => p.id !== toSave.id);
-        const existing = prev.find((p) => p.id === toSave.id);
-        if (existing) {
-          return prev.map((p) => (p.id === toSave.id ? toSave : p));
-        }
-        return [toSave, ...without.filter((p) => p.id !== activeProject.id)];
-      });
-
-      if (draftProject?.id === activeProject.id) {
-        setDraftProject(null);
-      }
-
-      setSaveStatus("saved");
-    } catch {
-      setSaveStatus("error");
-    } finally {
-      setIsSaving(false);
-    }
-  }, [
-    activeProject,
-    blobUploadEnabled,
-    cloudEnabled,
-    draftProject,
-    savedProjects,
-    videoBlobUrls,
-  ]);
+    await commitProject(activeProject);
+  }, [activeProject, commitProject]);
 
   const handleRunOutput = useCallback(async () => {
     if (!activeProject) return;
@@ -428,19 +381,31 @@ export function ClipWorkspace({
       });
 
       setLastOutputMode(result.mode);
-      replaceActiveProject({
+      const updatedProject: ClipProject = {
         ...activeProject,
         durationMs: result.durationMs ?? activeProject.durationMs,
         segments: result.segments,
         readOnlyTitles: result.readOnlyTitles,
         editableTitles: result.editableTitles,
-      });
+      };
+
+      replaceActiveProject(updatedProject);
+
+      if (cloudEnabled) {
+        await commitProject(updatedProject);
+      }
     } catch (error) {
       setOutputError((error as Error).message);
     } finally {
       setIsOutputRunning(false);
     }
-  }, [activeProject, replaceActiveProject, videoBlobUrls]);
+  }, [
+    activeProject,
+    cloudEnabled,
+    commitProject,
+    replaceActiveProject,
+    videoBlobUrls,
+  ]);
 
   const handleSelectionTextSave = useCallback(
     (text: string) => {
@@ -467,7 +432,11 @@ export function ClipWorkspace({
     if (!deleteTarget) return;
     setIsDeleting(true);
     try {
-      if (cloudEnabled && deleteTarget.isSaved) {
+      if (
+        cloudEnabled &&
+        deleteTarget.isSaved &&
+        isNeonPersistedProjectId(deleteTarget.id)
+      ) {
         await deleteProjectAction(deleteTarget.id);
       }
       setSavedProjects((prev) =>
@@ -583,6 +552,7 @@ export function ClipWorkspace({
             lastOutputMode={lastOutputMode}
             isSaving={isSaving}
             isDeleting={isDeleting}
+            saveError={saveError}
             onTogglePane={() => setPane4Open((v) => !v)}
             onSourceUrlChange={(url) => patchActiveProject({ sourceUrl: url })}
             onRunOutput={() => void handleRunOutput()}

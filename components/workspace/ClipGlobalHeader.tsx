@@ -64,7 +64,7 @@ export function ClipGlobalHeader({
           </Badge>
         ) : null}
         {cloudEnabled ? (
-          <Badge variant="outline">Turso 保存</Badge>
+          <Badge variant="outline">Neon 保存</Badge>
         ) : null}
       </div>
     </header>

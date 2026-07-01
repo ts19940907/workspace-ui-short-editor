@@ -67,6 +67,11 @@ export function updateSelectedSegmentText(
   return project;
 }
 
+/** Neon に保存済みの UUID か（未保存ドラフトの `proj-*` ではない） */
+export function isNeonPersistedProjectId(projectId: string): boolean {
+  return !projectId.startsWith("proj-");
+}
+
 export function createEmptyProject(index: number): ClipProject {
   return {
     id: `proj-${crypto.randomUUID().slice(0, 8)}`,

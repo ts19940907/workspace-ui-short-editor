@@ -31,6 +31,7 @@ type ClipOutputPaneProps = {
   lastOutputMode?: ClipOutputResponse["mode"] | null;
   isSaving: boolean;
   isDeleting?: boolean;
+  saveError?: string | null;
   onTogglePane: () => void;
   onSourceUrlChange: (url: string) => void;
   onRunOutput: () => void;
@@ -50,6 +51,7 @@ export function ClipOutputPane({
   lastOutputMode = null,
   isSaving,
   isDeleting = false,
+  saveError = null,
   onTogglePane,
   onSourceUrlChange,
   onRunOutput,
@@ -165,8 +167,8 @@ export function ClipOutputPane({
             <p className="text-xs text-muted-foreground">
               {cloudEnabled
                 ? isSaved
-                  ? "「更新」で Neon の clip_project / title_segment / transcript_segment に上書き保存されます。"
-                  : "「保存」で Neon に書き込まれ、左の一覧に表示されます。"
+                  ? "「出力」完了時と「更新」で Neon に上書き保存されます。"
+                  : "「出力」完了時に Neon へ自動保存されます。「保存」で手動保存もできます。"
                 : "DATABASE_URL 未設定のため、この端末のメモリ上のみに保存されます（.env.local に DATABASE_URL を設定してください）。"}
             </p>
             {blobUploadEnabled ? (
@@ -179,6 +181,9 @@ export function ClipOutputPane({
                 BLOB_READ_WRITE_TOKEN / BLOB_WEBHOOK_PUBLIC_KEY 未設定のため、動画はこのブラウザ内のみ再生されます。リロード後も再生するには
                 .env.local に両方を設定し（`vercel env pull --environment=preview`）、動画を再選択してください。
               </p>
+            ) : null}
+            {saveError ? (
+              <p className="text-xs text-destructive">{saveError}</p>
             ) : null}
           </Card>
 
@@ -237,25 +242,13 @@ export function ClipOutputPane({
               で校正できます。`GEMINI_API_KEY` 設定時は Gemini
               による提案、未設定時は簡易チェックです。
             </p>
-            {hasTranscript ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setProofreadOpen(true)}
-              >
-                <SpellCheck data-icon="inline-start" />
-                文字起こしをチェック
-              </Button>
-            ) : null}
             <Button
               type="button"
               size="sm"
-              variant={hasTranscript ? "outline" : "default"}
               onClick={() => setProofreadOpen(true)}
             >
               <SpellCheck data-icon="inline-start" />
-              {hasTranscript ? "ファイルからチェック" : "誤字脱字チェック"}
+              誤字脱字チェック
             </Button>
           </Card>
         </div>

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const proofreadRequestSchema = z.object({
-  text: z.string().min(1).max(100_000),
+  text: z.string().min(1),
 });
 
 export const proofreadResponseSchema = z.object({
